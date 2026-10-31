@@ -1,0 +1,6 @@
+{
+  "name": "@lite-speech/bench-benchmark",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Performance harness: cold start, time-to-first-audio, real-time factor, peak RAM (M5)."
+}

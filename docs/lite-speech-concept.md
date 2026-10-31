@@ -98,11 +98,11 @@ The ONNX engine implements the core contract using **Transformers.js** and its s
 
 ## 3. Phonon as the Initial Model Family
 
-| Candidate | Intended use | Current considerations |
-|---|---|---|
-| [onnx-community/phonon-31m-en-ONNX](https://huggingface.co/onnx-community/phonon-31m-en-ONNX) | **English MVP** | ONNX export available; Apache-2.0; Transformers.js examples are documented, with version-dependent limitations. |
-| [gradium/phonon-40m-de](https://huggingface.co/gradium/phonon-40m-de) | **German, later** | 40M-parameter model; gated; CC BY-NC 4.0; no directly usable Transformers.js ONNX export verified in this concept. |
-| [gradium/phonon-40m-multilingual](https://huggingface.co/gradium/phonon-40m-multilingual) | **Optional, later** | Multilingual, gated, non-commercial; requires separate export, compatibility, and quality validation. |
+| Candidate                                                                                     | Intended use        | Current considerations                                                                                             |
+| --------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| [onnx-community/phonon-31m-en-ONNX](https://huggingface.co/onnx-community/phonon-31m-en-ONNX) | **English MVP**     | ONNX export available; Apache-2.0; Transformers.js examples are documented, with version-dependent limitations.    |
+| [gradium/phonon-40m-de](https://huggingface.co/gradium/phonon-40m-de)                         | **German, later**   | 40M-parameter model; gated; CC BY-NC 4.0; no directly usable Transformers.js ONNX export verified in this concept. |
+| [gradium/phonon-40m-multilingual](https://huggingface.co/gradium/phonon-40m-multilingual)     | **Optional, later** | Multilingual, gated, non-commercial; requires separate export, compatibility, and quality validation.              |
 
 For **Phonon 31M EN ONNX**, the model card reports approximate sizes for its two model graphs combined: **41 MB (`q4f16`)**, **67 MB (`q4`)**, or **161 MB (`fp32`)**. Tokenizer, configuration, voice assets, and runtime files are **additional**. Measure the full install size before declaring a profile suitable for a given download budget.
 
@@ -127,25 +127,25 @@ Phonon produces **24 kHz mono audio** and operates internally on latent frames o
 This is an **illustrative target API**, not an existing implementation:
 
 ```ts
-import { createTts } from '@lite-speech/core';
-import { createOnnxEngine } from '@lite-speech/engine-onnx';
+import { createTts } from "@lite-speech/core";
+import { createOnnxEngine } from "@lite-speech/engine-onnx";
 
 const tts = createTts({
   engine: createOnnxEngine({
-    model: 'onnx-community/phonon-31m-en-ONNX',
-    revision: '<verified-commit-sha>',
-    device: 'auto',
-    quantization: 'auto',
+    model: "onnx-community/phonon-31m-en-ONNX",
+    revision: "<verified-commit-sha>",
+    device: "auto",
+    quantization: "auto",
   }),
-  offline: 'strict', // Assets must already be available locally.
+  offline: "strict", // Assets must already be available locally.
 });
 
 // Model-independent PCM output.
-const audio = await tts.synthesize('Hello from lite-speech.');
+const audio = await tts.synthesize("Hello from lite-speech.");
 // audio: { pcm: Float32Array, sampleRate: number }
 
 const controller = new AbortController();
-for await (const chunk of tts.stream('Generated entirely offline.', {
+for await (const chunk of tts.stream("Generated entirely offline.", {
   signal: controller.signal,
 })) {
   // Forward chunk.pcm and chunk.sampleRate to an audio sink.

@@ -1,0 +1,54 @@
+{
+  "name": "@lite-speech/engine-onnx",
+  "version": "0.0.0",
+  "description": "Local text-to-speech engine for lite-speech, powered by Transformers.js and ONNX Runtime.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "tts",
+    "text-to-speech",
+    "speech-synthesis",
+    "transformers",
+    "onnx",
+    "webworker",
+    "browser",
+    "local",
+    "offline"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/realdeepnull/lite-speech.git",
+    "directory": "packages/engine-onnx"
+  },
+  "homepage": "https://github.com/realdeepnull/lite-speech#readme",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || ^26.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "tsdown": "^0.23.4",
+    "vitest": "^5.0.5"
+  }
+}

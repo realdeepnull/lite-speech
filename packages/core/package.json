@@ -1,0 +1,52 @@
+{
+  "name": "@lite-speech/core",
+  "version": "0.0.0",
+  "description": "Engine-independent, privacy-friendly, offline-capable text-to-speech core API.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "tts",
+    "text-to-speech",
+    "speech-synthesis",
+    "browser",
+    "local",
+    "offline",
+    "privacy"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/realdeepnull/lite-speech.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/realdeepnull/lite-speech#readme",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || ^26.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "tsdown": "^0.23.4",
+    "vitest": "^5.0.5"
+  }
+}

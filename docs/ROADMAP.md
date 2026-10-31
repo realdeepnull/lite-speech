@@ -1,6 +1,7 @@
 # Roadmap of `lite-speech`
 
-> **Status:** Planning document — implementation has not started yet.
+> **Status:** M0 (repository and toolchain foundation) implemented; M1 is next.
+> Milestones below keep their checklist state.
 > **Date:** October 31, 2026
 > **Target:** First public release `0.1.0` of `@lite-speech/core` and
 > `@lite-speech/engine-onnx`.
@@ -63,34 +64,44 @@ automatically, even before the first library code exists.
 
 **Deliverables**
 
-- [ ] npm workspaces: `packages/core`, `packages/engine-onnx`, plus private
-      `examples/*` and `bench/*` directories.
-- [ ] Root `package.json` with the validation scripts from
+- [x] npm workspaces: `packages/core`, `packages/engine-onnx`, plus private
+      `examples/*` and `bench/*` workspace packages (`private: true`, never
+      published) that opt into nothing until M3/M5.
+- [x] Root `package.json` with the validation scripts from
       [AGENTS.md](../AGENTS.md): `build`, `typecheck`, `lint`, `format:check`,
-      `format`, `test`, `knip`, `size`, `pack:check` — each using
-      `--workspaces --if-present` so packages opt in when they get the tool.
-- [ ] `tsconfig.base.json` with `strict`, `noUncheckedIndexedAccess`,
+      `format`, `test`, `knip`, `size`, `pack:check`. Per-package scripts
+      (`build`, `typecheck`, `test`, `size`, `pack:check`) fan out with
+      `--workspaces --if-present`, so a package opts in when it gets the tool;
+      `lint`, `format`, `format:check`, and `knip` are repository-wide by
+      definition.
+- [x] `tsconfig.base.json` with `strict`, `noUncheckedIndexedAccess`,
       `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, and
       `isolatedModules`.
-- [ ] ESLint flat config + Prettier config (`.prettierrc`, `.prettierignore`,
-      `.editorconfig`).
-- [ ] Package skeletons: `"type": "module"`, `exports` map with `types` +
+- [x] ESLint flat config + Prettier config (`.prettierrc`, `.prettierignore`,
+      `.editorconfig`, plus `.gitattributes` to keep LF on checkout).
+- [x] Package skeletons: `"type": "module"`, `exports` map with `types` +
       `import`, `sideEffects: false`, `files: ["dist", "README.md", "LICENSE"]`,
       `publishConfig.access: "public"`, `engines.node`.
-- [ ] `LICENSE` per package plus a `NOTICE`/third-party section describing model
+- [x] `LICENSE` per package plus a `NOTICE`/third-party section describing model
       licenses (Apache-2.0 vs. CC BY-NC 4.0).
-- [ ] CI workflow skeleton: install with `npm ci`, then
-      `build → typecheck → lint → format:check → test`.
-- [ ] `README.md` with the positioning statement, install instructions, and a
+- [x] CI workflow skeleton: install with `npm ci`, then
+      `build → typecheck → lint → format:check → test` on every Node line the
+      `engines` field declares (22, 24, 26).
+- [x] `README.md` with the positioning statement, install instructions, and a
       pointer to the docs.
 - [ ] Confirm the npm scope (`@lite-speech` is a proposal) or record the final
-      scope before M6.
+      scope before M6. _Status: the scope is currently unclaimed on the public
+      registry (`404` for both package names), which means it is available but
+      not yet owned; claim it and close D4 before the first publish._
 
 **Exit gate**
 
-- `npm run build`, `typecheck`, `lint`, `format:check`, and `test` all succeed
-  on the skeletons, locally and in CI.
-- No package has a runtime dependency yet; `knip` is clean once enabled in M2.
+- [x] `npm run build`, `typecheck`, `lint`, `format:check`, and `test` all
+      succeed on the skeletons, locally and in CI.
+- [x] No package has a runtime dependency yet. The root `knip` script runs and is
+      clean; `size` and `pack:check` are already wired as root scripts but stay
+      no-ops until a package defines them (M2/M6), which is exactly how the
+      just-in-time tooling rule is enforced.
 
 ---
 
