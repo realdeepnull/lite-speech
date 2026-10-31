@@ -1,11 +1,12 @@
 import { defineConfig } from "vitest/config";
 
-// M0 keeps the placeholder suite in Node so the workspace has no browser
-// tooling yet. M3 switches this to Vitest browser mode once the worker,
-// Cache Storage, and WebGPU code exists.
+// The unit suite runs in Node. The browser suite (`tests/**/*.browser.test.ts`) has its own
+// config because it downloads model weights and takes minutes; the fast default must not pay
+// for it. `npm test` runs this one, `npm run test:browser` runs the other.
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
+    exclude: ["tests/**/*.browser.test.ts", "**/node_modules/**"],
     environment: "node",
   },
 });

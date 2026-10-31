@@ -10,7 +10,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./node": {
+      "types": "./dist/node.d.mts",
+      "import": "./dist/node.mjs"
+    },
+    "./worker": {
+      "import": "./dist/worker.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
@@ -21,8 +29,18 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "size": "size-limit"
   },
+  "size-limit": [
+    {
+      "name": "engine entry (model runtime not included)",
+      "path": "dist/index.js",
+      "limit": "12 kB",
+      "gzip": true
+    }
+  ],
   "keywords": [
     "tts",
     "text-to-speech",
@@ -47,7 +65,16 @@
   "publishConfig": {
     "access": "public"
   },
+  "peerDependencies": {
+    "@lite-speech/core": "^0.0.0"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.2"
+  },
   "devDependencies": {
+    "@lite-speech/core": "0.0.0",
+    "@vitest/browser-playwright": "^5.0.5",
+    "playwright": "^1.64.1",
     "tsdown": "^0.23.4",
     "vitest": "^5.0.5"
   }

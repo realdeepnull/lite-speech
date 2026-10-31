@@ -205,22 +205,22 @@ contract.
 
 **Deliverables**
 
-- [ ] `create-onnx-engine.ts` — factory with `models`, `registry`, and
+- [x] `create-onnx-engine.ts` — factory with `models`, `registry`, and
       `profiles` overrides; `device`/`dtype` application.
-- [ ] `transformers-engine.ts` — `TtsEngine` implementation: worker lifecycle,
+- [x] `transformers-engine.ts` — `TtsEngine` implementation: worker lifecycle,
       `id`-correlated pending map, abort handling, cache checks, error mapping.
-- [ ] `worker.ts` — single model per worker, serialized message queue,
+- [x] `worker.ts` — single model per worker, serialized message queue,
       `ArrayBuffer` transfer for PCM, progress events, cooperative cancel,
       `dispose` that always acknowledges.
-- [ ] `profiles.ts` — `ModelProfile` seam resolved from `metadata.profile`, with
+- [x] `profiles.ts` — `ModelProfile` seam resolved from `metadata.profile`, with
       the first Phonon profile and its frame handling.
-- [ ] `models.ts` — declarative model **and voice** registry with pinned
+- [x] `models.ts` — declarative model **and voice** registry with pinned
       revisions, sizes, hashes, and `license`.
-- [ ] `webgpu.ts` — memoized adapter probe, `resolveDeviceDtype()`, no silent
+- [x] `webgpu.ts` — memoized adapter probe, `resolveDeviceDtype()`, no silent
       fallback for explicit `"webgpu"`, `device-fallback` event for `"auto"`.
-- [ ] Node.js degradation: in-thread inference when `Worker` is unavailable;
+- [x] Node.js degradation: in-thread inference when `Worker` is unavailable;
       cache-miss-safe behaviour without `Cache Storage`.
-- [ ] `./worker` export subpath and `alwaysBundle` configuration for
+- [x] `./worker` export subpath and `alwaysBundle` configuration for
       `@lite-speech/core` and `@huggingface/transformers`.
 
 **Tooling added:** `playwright`, `@vitest/browser-playwright` (Vitest 4 browser
@@ -229,14 +229,38 @@ weights, with an explicit "model assets not included" note).
 
 **Exit gate**
 
-- One profile synthesizes correctly in Chromium via the **public** core API.
-- Streaming assertions pass: gaps, duplicates, ordering, and `final` semantics.
-- Cancellation is observable: `TtsError(ABORTED)`, no unbounded buffering, and
-  worker reuse after abort.
-- Explicit `"webgpu"` on a device without an adapter throws; `"auto"` emits
-  `device-fallback`.
-- Both packages build from a clean `npm ci` and the demo page runs against the
-  built ESM output.
+- [x] One profile synthesizes correctly in Chromium via the **public** core API.
+      _Measured: `q4` on WebGPU, 4.56 s of 24 kHz audio in 3.16 s, in a module
+      worker, through `createTts()`._
+- [x] Streaming assertions pass: gaps, duplicates, ordering, and `final` semantics.
+      _56 frames of 1 920 samples, first chunk at 50 ms, exactly one `final` chunk._
+- [x] Cancellation is observable: `TtsError(ABORTED)`, no unbounded buffering, and
+      worker reuse after abort.
+- [x] Explicit `"webgpu"` on a device without an adapter throws; `"auto"` emits
+      `device-fallback`.
+- [x] Both packages build from a clean `npm ci` and the demo page runs against the
+      built ESM output.
+
+**Outcome:** the worker is **pull-based** (`stream-open` → N × `stream-next` →
+`stream-close`) rather than push-with-a-high-water-mark. The engine asks for one
+frame at a time, so backpressure is structural instead of a credit protocol, the
+worker cannot buffer ahead of the consumer by construction, and every pull is a
+cancellation checkpoint. Because the worker cannot know a frame is last until its
+generator ends, the **engine** emits the single `final: true` chunk when the
+session reports `stream-end`; peeking one frame ahead would double
+time-to-first-audio.
+
+Two defects surfaced only in the browser and are worth recording:
+
+1. **A bundled `core` made `isTtsError()` fail across the boundary.** The engine
+   bundles `@lite-speech/core`, so at runtime the engine's `TtsError` and the
+   application's are two distinct classes; `instanceof` rejected the engine's
+   `ABORTED`, and core re-wrapped it as `STREAM_FAILED`. The guard is now
+   structural (`name` + `code` + `message`), which is the documented contract.
+2. **Abandoning a stream deadlocked against inference.** A generator cannot observe
+   `return()` while suspended in an `await`, so `break` inside `for await` waited
+   for a frame nobody wanted. `stream()` now aborts an internal controller first and
+   reports `done` immediately.
 
 ---
 

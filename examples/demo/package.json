@@ -2,5 +2,9 @@
   "name": "@lite-speech/example-demo",
   "version": "0.0.0",
   "private": true,
-  "description": "Bundler-free browser demo against the built lite-speech ESM output (M3)."
+  "description": "Bundler-free browser demo against the built lite-speech ESM output (M3).",
+  "type": "module",
+  "scripts": {
+    "serve": "node serve.mjs"
+  }
 }

@@ -27,3 +27,6 @@ AGENTS.md
 .agents
 skills-lock.json
 npm-library-tooling.md
+packages/**/tests/__screenshots__/
+# Vitest browser-mode failure artifacts (screenshots, traces) are diagnostic only.
+**/.vitest/

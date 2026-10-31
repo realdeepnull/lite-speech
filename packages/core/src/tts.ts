@@ -345,13 +345,47 @@ export class Tts {
    * ```
    *
    * Aborting `options.signal` terminates the iterator with `TtsError(ABORTED)`;
-   * chunks already delivered remain valid.
+   * chunks already delivered remain valid. Abandoning the iterator (`break`,
+   * `return()`, an early `throw`) aborts the pending engine call too, so a consumer
+   * that stops listening never leaves the engine generating into a stream nobody
+   * reads — and never waits for it to finish.
    *
    * Empty input yields exactly one empty `final` chunk with `sampleRate: 0`
    * and never loads the model, so the chunk contract holds for every stream.
    */
   stream(text: string, options: SynthesizeOptions = {}): AsyncIterable<AudioChunk> {
-    return { [Symbol.asyncIterator]: () => this.#streamFrom(text, options) };
+    return {
+      [Symbol.asyncIterator]: (): AsyncIterator<AudioChunk> => {
+        // `#streamFrom` awaits the engine between chunks, and a generator cannot observe a
+        // `return()` while it is suspended inside such an `await`. Aborting this controller
+        // first is what makes abandonment interruptible: the pending engine call settles,
+        // the generator unwinds, and `return()` reports "done" instead of deadlocking against
+        // inference that has not finished yet.
+        const abandoned = new AbortController();
+        const forward = (): void => abandoned.abort();
+        options.signal?.addEventListener("abort", forward, { once: true });
+        const generator = this.#streamFrom(text, options, abandoned.signal);
+        const release = (): void => {
+          abandoned.abort();
+          options.signal?.removeEventListener("abort", forward);
+        };
+        return {
+          next: (): Promise<IteratorResult<AudioChunk>> => generator.next(),
+          return: async (): Promise<IteratorResult<AudioChunk>> => {
+            release();
+            // Not awaited: the generator is suspended on an engine call that only settles once
+            // that call aborts, which is exactly what `release()` just asked for.
+            generator.return(undefined).catch(() => undefined);
+            return { done: true, value: undefined };
+          },
+          throw: async (error?: unknown): Promise<IteratorResult<AudioChunk>> => {
+            release();
+            generator.return(undefined).catch(() => undefined);
+            throw error;
+          },
+        };
+      },
+    };
   }
 
   /**
@@ -407,7 +441,11 @@ export class Tts {
     return this.#disposePromise;
   }
 
-  async *#streamFrom(text: string, options: SynthesizeOptions): AsyncGenerator<AudioChunk> {
+  async *#streamFrom(
+    text: string,
+    options: SynthesizeOptions,
+    abandoned?: AbortSignal,
+  ): AsyncGenerator<AudioChunk> {
     this.#assertNotDisposed();
     this.#assertNotAborted(options.signal, "stream");
     const prepared = prepareText(text);
@@ -416,9 +454,11 @@ export class Tts {
       return;
     }
 
-    // An internal controller lets dispose() stop a stream that is blocked inside
-    // the engine; the caller's signal is forwarded into it unchanged.
+    // An internal controller lets `dispose()` and an abandoned consumer stop a stream that is
+    // blocked inside the engine; the caller's signal is forwarded into it unchanged.
     const controller = new AbortController();
+    const forwardAbandon = (): void => controller.abort();
+    abandoned?.addEventListener("abort", forwardAbandon, { once: true });
     const forwardAbort = (): void => controller.abort();
     options.signal?.addEventListener("abort", forwardAbort, { once: true });
     this.#activeStreams.add(controller);
@@ -475,6 +515,7 @@ export class Tts {
       throw normalizeTtsError(error, TTS_ERROR_CODES.STREAM_FAILED, "Audio stream failed");
     } finally {
       options.signal?.removeEventListener("abort", forwardAbort);
+      abandoned?.removeEventListener("abort", forwardAbandon);
       this.#activeStreams.delete(controller);
     }
   }

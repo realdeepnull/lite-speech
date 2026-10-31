@@ -26,6 +26,7 @@ const browserGlobals = {
   fetch: "readonly",
   TextEncoder: "readonly",
   AudioContext: "readonly",
+  AbortController: "readonly",
 };
 
 export default defineConfig(
@@ -59,6 +60,25 @@ export default defineConfig(
     files: ["spike/browser/**/*.js"],
     languageOptions: {
       globals: browserGlobals,
+    },
+  },
+  {
+    // The demo and its server are the workspace's only plain-JavaScript consumers. They are
+    // deliberately bundler-free, so they are not part of a package build and declare the few
+    // globals they use instead of adding a `globals` dependency.
+    files: ["examples/demo/main.js"],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: "module",
+      globals: browserGlobals,
+    },
+  },
+  {
+    files: ["examples/demo/serve.mjs"],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: "module",
+      globals: { ...nodeGlobals, console: "readonly" },
     },
   },
 );

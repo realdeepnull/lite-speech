@@ -22,8 +22,25 @@ npm install @lite-speech/core @lite-speech/engine-onnx
 
 ## Quick start
 
-`@lite-speech/core` (M2) is implemented; the engine (`createOnnxEngine`, M3) is
-next, so a runnable end-to-end quick start lands with the M6 beta.
+```ts
+import { createTts } from "@lite-speech/core";
+import { createOnnxEngine } from "@lite-speech/engine-onnx";
+
+// Async because resolving WebGPU requires an adapter probe.
+const engine = await createOnnxEngine({ device: "auto" });
+const tts = createTts({ engine, voice: "LMDIYE0Oa377Qh6Z", offline: "allow" });
+
+const { pcm, sampleRate } = await tts.synthesize("Hello from your own device.");
+
+// Streaming asks the worker for one frame per consumer turn: backpressure is structural.
+for await (const chunk of tts.stream("A longer passage.")) {
+  sink.enqueue(chunk.pcm, chunk.sampleRate); // exactly one chunk has `final: true`
+}
+```
+
+In Node.js, use `createNodeOnnxEngine` from `@lite-speech/engine-onnx/node`; it runs
+inference in-thread and reads cache state from the filesystem. A bundler-free browser
+demo against the built ESM output lives in [examples/demo](examples/demo).
 
 ## Status
 
@@ -34,8 +51,8 @@ Pre-release. Milestones are tracked in the [roadmap](docs/ROADMAP.md):
 | M0        | Foundation            | done    |
 | M1        | Inference spike       | done    |
 | M2        | Core MVP              | done    |
-| M3        | ONNX engine MVP       | next    |
-| M4        | Assets & provisioning | planned |
+| M3        | ONNX engine MVP       | done    |
+| M4        | Assets & provisioning | next    |
 | M5        | Measurement           | planned |
 | M6        | Beta `0.1.0`          | planned |
 

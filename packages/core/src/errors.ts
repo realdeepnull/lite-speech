@@ -70,9 +70,26 @@ export class TtsError extends Error {
   }
 }
 
-/** Type guard for {@link TtsError}. */
+/**
+ * Type guard for {@link TtsError}.
+ *
+ * The check is **structural**, not `instanceof`. A library that bundles `@lite-speech/core` into
+ * an engine — and any application that ends up with two copies of a dependency — has two distinct
+ * `TtsError` classes, and an `instanceof` test would reject an error raised by the other copy. The
+ * consequence is not cosmetic: an `ABORTED` raised by an engine would be re-wrapped as
+ * `STREAM_FAILED` at the core boundary, which breaks the documented cancellation contract. `name`
+ * and `code` are part of the public contract, so they are the right thing to check.
+ */
 export function isTtsError(error: unknown): error is TtsError {
-  return error instanceof TtsError;
+  if (error === null || typeof error !== "object") {
+    return false;
+  }
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  return (
+    candidate.name === "TtsError" &&
+    typeof candidate.code === "string" &&
+    typeof candidate.message === "string"
+  );
 }
 
 /**

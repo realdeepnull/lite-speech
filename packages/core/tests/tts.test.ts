@@ -304,6 +304,19 @@ describe("Tts.dispose()", () => {
     await expect(pending).rejects.toMatchObject({ code: TTS_ERROR_CODES.ABORTED });
   });
 
+  it("lets a consumer abandon a stream that is blocked inside the engine", async () => {
+    const engine = createHangingEngine();
+    const tts = createTts({ engine, offline: "allow" });
+    const iterator = tts.stream("Hello")[Symbol.asyncIterator]();
+    const pending = iterator.next();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // Breaking out while the engine is still generating must not wait for that generation: the
+    // iterator reports "done" immediately and the abandoned pull settles as ABORTED.
+    await expect(iterator.return?.()).resolves.toMatchObject({ done: true });
+    await expect(pending).rejects.toMatchObject({ code: TTS_ERROR_CODES.ABORTED });
+  });
+
   it("normalizes an engine dispose failure", async () => {
     const engine = createFakeEngine({ disposeError: new Error("close failed") });
     const tts = createTts({ engine });

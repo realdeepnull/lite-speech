@@ -4,12 +4,166 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>lite-speech demo</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+        line-height: 1.5;
+      }
+      body {
+        display: grid;
+        gap: 1.25rem;
+        margin: 0 auto;
+        max-width: 48rem;
+        padding: 2rem 1.25rem 4rem;
+      }
+      h1 {
+        font-size: 1.4rem;
+        margin: 0;
+      }
+      p.intro {
+        margin: 0;
+        opacity: 0.75;
+      }
+      fieldset {
+        border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+        border-radius: 0.5rem;
+        display: grid;
+        gap: 0.75rem;
+        padding: 1rem;
+      }
+      legend {
+        font-weight: 600;
+        padding: 0 0.35rem;
+      }
+      label {
+        display: grid;
+        gap: 0.25rem;
+        font-size: 0.9rem;
+      }
+      textarea,
+      select,
+      button {
+        font: inherit;
+      }
+      textarea {
+        box-sizing: border-box;
+        min-height: 5rem;
+        padding: 0.5rem;
+        resize: vertical;
+        width: 100%;
+      }
+      .row {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      button {
+        cursor: pointer;
+        padding: 0.45rem 0.9rem;
+      }
+      button:disabled {
+        cursor: progress;
+        opacity: 0.6;
+      }
+      dl {
+        display: grid;
+        font-size: 0.9rem;
+        gap: 0.25rem 0.75rem;
+        grid-template-columns: max-content 1fr;
+        margin: 0;
+      }
+      dt {
+        opacity: 0.7;
+      }
+      dd {
+        font-variant-numeric: tabular-nums;
+        margin: 0;
+      }
+      pre {
+        background: color-mix(in srgb, currentColor 7%, transparent);
+        border-radius: 0.4rem;
+        font-size: 0.8rem;
+        margin: 0;
+        max-height: 16rem;
+        overflow: auto;
+        padding: 0.75rem;
+      }
+      progress {
+        width: 100%;
+      }
+    </style>
   </head>
   <body>
     <h1>lite-speech demo</h1>
-    <p>
-      The bundler-free demo is built in milestone M3, once the ONNX engine can synthesize audio. See
-      <a href="../../docs/ROADMAP.md">docs/ROADMAP.md</a>.
+    <p class="intro">
+      Phonon 31M EN running locally in a worker through the public
+      <code>@lite-speech/core</code> API. Nothing is uploaded; the model is downloaded from the
+      Hugging Face Hub once and served from Cache Storage afterwards. Needs the built packages
+      (<code>npm run build</code>) and a static server rooted at the repository.
     </p>
+
+    <fieldset>
+      <legend>Environment</legend>
+      <dl>
+        <dt>WebGPU</dt>
+        <dd data-role="gpu">probing…</dd>
+        <dt>Voices</dt>
+        <dd data-role="voice-count">—</dd>
+        <dt>Model</dt>
+        <dd data-role="model">not loaded</dd>
+      </dl>
+    </fieldset>
+
+    <fieldset>
+      <legend>Synthesize</legend>
+      <label>
+        Voice
+        <select data-role="voice">
+          <option value="">loading…</option>
+        </select>
+      </label>
+      <label>
+        Text
+        <textarea data-role="text" rows="3">
+Hello from lite-speech. This is running entirely on your device.</textarea>
+      </label>
+      <div class="row">
+        <button data-role="speak" disabled>Speak</button>
+        <button data-role="stream" disabled>Stream</button>
+        <button data-role="stop" disabled>Stop</button>
+        <span data-role="status">idle</span>
+      </div>
+      <progress data-role="progress" max="1" value="0" hidden></progress>
+      <label class="row">
+        <input type="checkbox" data-role="offline" checked />
+        Require cached assets (<code>offline: "strict"</code>)
+      </label>
+      <div class="row">
+        <button data-role="prepare">Prepare assets</button>
+        <button data-role="evict">Remove cached assets</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Report</legend>
+      <pre data-role="log"></pre>
+    </fieldset>
+
+    <!--
+      The demo is bundler-free on purpose: it proves the published ESM output runs as-is, with
+      the worker resolved from the package's documented `./worker` export. The import map maps
+      the bare package names onto the built `dist` folders, which is what a bundler would do.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@lite-speech/core": "../../packages/core/dist/index.js",
+          "@lite-speech/engine-onnx": "../../packages/engine-onnx/dist/index.js"
+        }
+      }
+    </script>
+    <script type="module" src="./main.js"></script>
   </body>
 </html>

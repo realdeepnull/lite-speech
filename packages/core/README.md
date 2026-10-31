@@ -8,8 +8,9 @@ model. It ships with **zero runtime dependencies** and never imports an engine,
 an ONNX runtime, or Transformers.js.
 
 > **Status:** M2. The public API is implemented and covered by a fake-engine
-> unit suite that runs on Node.js without DOM shims. The first runnable
-> end-to-end quick start lands with the M3 engine and the M6 example.
+> unit suite that runs on Node.js without DOM shims. A runnable end-to-end quick
+> start needs [`@lite-speech/engine-onnx`](https://www.npmjs.com/package/@lite-speech/engine-onnx),
+> which landed with M3.
 
 ## Install
 
@@ -23,17 +24,17 @@ is required to synthesize audio.
 
 ## Quick start
 
-The composition below is the target API. The core half (M2) is implemented and
-tested with a fake engine; `createOnnxEngine` lands with M3, so a runnable
-end-to-end sample arrives with the M6 example.
-
 ```ts
 import { createTts, encodeWav } from "@lite-speech/core";
 import { createOnnxEngine } from "@lite-speech/engine-onnx";
 
+// `createOnnxEngine()` is async because resolving WebGPU requires an adapter
+// probe; `createTts()` itself stays synchronous, like every engine creation.
+const engine = await createOnnxEngine({ device: "auto" });
+
 const tts = createTts({
-  engine: createOnnxEngine({ model: "onnx-community/phonon-31m-en-ONNX" }),
-  voice: "female-1",
+  engine,
+  voice: "LMDIYE0Oa377Qh6Z",
   offline: "strict", // assets must already be cached
 });
 

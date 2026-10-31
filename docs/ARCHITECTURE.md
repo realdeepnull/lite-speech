@@ -291,50 +291,59 @@ otherwise be re-implemented in every framework integration. Mirrors
 
 | Module                   | Role                                                                                                                         |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `create-onnx-engine.ts`  | Factory: builds the registry from defaults + overrides, applies `device`/`dtype`                                             |
+| `create-onnx-engine.ts`  | Factory: builds the registry from defaults + overrides, resolves device/dtype once, async because a WebGPU probe is          |
 | `transformers-engine.ts` | `TransformersEngine implements TtsEngine` — worker lifecycle, request correlation, cancellation, cache checks, error mapping |
-| `worker.ts`              | The Web Worker: one loaded pipeline instance, serialized request queue, inference, audio chunk posting, timing events        |
-| `models.ts`              | `ENGINE_ID = "onnx"`, `defaultModelIds`, `createDefaultRegistry()` (model **and** voice manifests)                           |
+| `model-host.ts`          | Everything the worker does except post messages: single model, single-flight loads, one stream session, cooperative cancel   |
+| `worker.ts`              | The worker entry: serialized message queue and protocol plumbing                                                             |
+| `worker-protocol.ts`     | The request/response message contract shared by the engine and the worker                                                    |
+| `phonon.ts`              | The graph runner: `flow_lm` + `mimi_decoder`, public tokenizer encoding, per-frame generation                                |
+| `models.ts`              | `ENGINE_ID = "onnx"`, the pinned model and voice manifests, `createDefaultRegistry()`                                        |
+| `profiles.ts`            | `ModelProfile` type, the built-in Phonon profile, text and frame-budget rules                                                |
 | `webgpu.ts`              | `detectWebGpu`, `isFp16Supported`, `resolveDeviceDtype`, device/dtype types                                                  |
-| `profiles.ts`            | `ModelProfile` type and the built-in profile registry; per-profile input assembly, frame handling, and output normalization  |
+| `node.ts`                | Node.js entry: in-thread inference plus a filesystem cache probe                                                             |
 | `index.ts`               | Public engine surface                                                                                                        |
-| `worker` subpath         | `./worker` → `dist/worker.js`, instantiated via `new Worker(new URL("./worker.js", import.meta.url), { type: "module" })`    |
+| `./worker` subpath       | `./worker` → `dist/worker.js`, instantiated via `new Worker(new URL("./worker.js", import.meta.url), { type: "module" })`    |
 
 `profiles.ts` exists so that model-family specifics stay behind a single,
-replaceable seam. A `ModelProfile` describes everything the generic engine must
+replaceable seam. A `ModelProfile` describes everything the generic worker must
 not hard-code:
 
 ```ts
 interface ModelProfile {
-  id: string; // e.g. "encoder-decoder-v1"
-  build(pipeline, options): ProfileRunner;
-}
-
-interface ProfileRunner {
-  synthesize(text, voice, options): AsyncIterable<AudioChunk>;
-  sampleRate: number;
-  channels: 1;
+  id: string; // e.g. "phonon"
+  streaming: StreamingClass; // truthful classification, surfaced in capabilities
+  frameRate?: number; // 12.5 for a frame-based model
+  prepareSegment(segment: string): string; // measured text shaping
+  maxFrames(prepared: string, inputLength: number, config: PhononConfig): number; // runaway guard
 }
 ```
 
-The engine never names a model family. It resolves a profile by the manifest's
-`metadata.profile` (falling back to a generic default), so supporting another
-architecture later means registering a profile — not changing core, the worker
-protocol, or the public API. Built-in profiles carry their own frame sizes,
-conditioning inputs, and PCM normalization; version-specific workarounds stay
-inside the profile.
+Two things deliberately stay **out** of the profile. The graph driving lives in
+`phonon.ts`, which only the worker bundle can reach; and the profile has no
+`build(pipeline)` step, because the pinned Transformers.js release has no class
+for this architecture, so a profile is configuration over one runner rather than a
+class factory. The worker resolves a profile by the manifest's `family` (falling
+back to the built-in one), and an _unknown_ id is an explicit error rather than a
+silent Phonon fallback — running a different family through these input shapes
+would produce noise instead of an error. Built-in profiles carry their own frame
+sizes, conditioning inputs, and PCM normalization; version-specific workarounds
+stay inside them.
 
 ### 4.2 Device and dtype policy
 
-The default is deliberately boring: **`device: "wasm"`**, with the dtype chosen
-from the measured compatibility matrix for the selected model profile. WebGPU
-is opt-in (`"auto"` probes `navigator.gpu`, `"webgpu"` requires it and throws
-otherwise).
+The default is deliberately boring: **`device: "wasm"`** (or `"cpu"` under
+`onnxruntime-node`), with the dtype chosen from the measured compatibility matrix
+for the selected model profile. WebGPU is opt-in (`"auto"` probes `navigator.gpu`,
+`"webgpu"` requires it and throws otherwise). `createOnnxEngine()` is therefore
+**async**: a WebGPU probe cannot be awaited from the synchronous `createTts()`
+boundary, so resolution happens once, in the factory, and the engine it returns is
+synchronous like every other engine.
 
 ```text
-device "wasm"    -> { wasm,   dtype ?? defaultDtype("wasm") }
-device "webgpu"  -> probe adapter; throw if absent; { webgpu, dtype ?? defaultDtype("webgpu") }
-device "auto"    -> probe adapter; webgpu if present, else wasm; dtype ?? defaultDtype(device)
+device "wasm"    -> { wasm, dtype ?? "fp32" }   (no probe)
+device "cpu"     -> { cpu,  dtype ?? "fp32" }   (no probe)
+device "webgpu"  -> probe adapter; throw if absent; q4 default, q4f16 only with shader-f16
+device "auto"    -> webgpu if an adapter answers, else the environment default + device-fallback
 ```
 
 Rules inherited from `lite-translator` (`src/webgpu.ts`) and extended for TTS:
@@ -342,40 +351,51 @@ Rules inherited from `lite-translator` (`src/webgpu.ts`) and extended for TTS:
 - The adapter probe is **memoized including rejections**; `requestAdapter()` can
   cost tens of milliseconds and must not run twice per `load()`.
 - An explicit `"webgpu"` **never silently retries** on WASM. Only `"auto"` may
-  fall back, and it emits `device-fallback`.
-- Device selection is based on **verified operator coverage**, not merely the
-  presence of an adapter. A speech model using an op that `onnxruntime-web`
-  cannot execute on WebGPU must be routed to WASM.
+  fall back, and it reports `fallbackFrom: "webgpu"` so the caller can surface it.
+- **An accepted `webgpu` request is not evidence of GPU execution.** In Node.js the
+  runtime reports `webgpu` as a supported device and an explicit WebGPU load
+  _succeeds_ without `navigator.gpu` (M1 §5.1). The probe therefore gates on
+  `navigator.gpu` **and** adapter features, never on the runtime accepting a request.
+- `q4f16` is rejected up front without `shader-f16`, and `"auto"` silently demotes it
+  to `q4` on that adapter — an explicit request must not appear to work when it
+  cannot.
 - Quantization is chosen by **measured quality and performance**, never by file
-  size alone. `fp16` regressions on short inputs are documented in code, as in
-  `lite-translator`, because "just use the smallest file" is not safe.
-- The resolved dtype must also drive asset URLs (`_q4f16.onnx`, `_fp16.onnx`, …)
-  for cache checks and cache eviction, since Transformers.js selects files by
-  dtype suffix.
+  size alone. On CPU/WASM every quantized variant measured 20–26 % slower warm, so
+  `fp32` is the default there and `q4` is a documented, cheaper opt-in.
+- The resolved dtype also drives asset URLs (`_q4.onnx`, `_q4f16.onnx`, …) for cache
+  checks and cache eviction, since Transformers.js selects files by dtype suffix.
 
 ### 4.3 Worker protocol
 
 The worker is a single-model, single-threaded inference host behind an
 `id`-correlated request/response protocol. It follows
-`lite-translator/packages/engine-onnx/src/worker.ts` and adds streaming replies:
+`lite-translator/packages/engine-onnx/src/worker.ts` and adds **pull-based**
+streaming:
 
 ```text
 engine -> worker                          worker -> engine
 { kind: "load", id, modelId,       { kind: "progress", id, event }        (during load only)
-  device, dtype, voice }           { kind: "capabilities", id, device, dtype }
+  revision, device, dtype,        { kind: "capabilities", id, device, dtype,
+  profile, voice }                  modelId, modelVersion, sampleRate,
+                                    streaming }
                                    { kind: "loaded", id }
 
-{ kind: "synthesize", id, text,    { kind: "inference-start", id, chars }
-  voice, options }                 { kind: "audio-chunk", id, sequence,
-                                     pcm: ArrayBuffer, sampleRate }        (zero or more)
-                                   { kind: "inference-done", id, frames,
-                                     durationMs }
+{ kind: "synthesize", id, text,    { kind: "inference-start", id, textLength }
+  voice, temperature }             { kind: "inference-done", id, durationMs,
+                                     samples, sampleRate }
                                    { kind: "result", id, pcm, sampleRate,
                                      frames, durationMs }                  (full utterance)
 
-{ kind: "cancel", id }             (best effort; no response)
+{ kind: "stream-open", id, text,   { kind: "stream-opened", id }
+  voice, temperature }            { kind: "chunk", id, pcm, sampleRate }   (one per pull)
+{ kind: "stream-next", id }        { kind: "stream-end", id }              (nothing left)
+{ kind: "stream-close", id }       (no response)
+
+{ kind: "cancel", id }             { kind: "cancelled", id }
+{ kind: "cache-check", id,         { kind: "cache-state", id, cached, sizes }
+  modelId, revision, files }
 { kind: "dispose", id }            { kind: "disposed", id }
-                                   { kind: "error", id, code, message }
+                                   { kind: "error", id, message, code? }
 ```
 
 Why it is shaped this way:
@@ -385,8 +405,19 @@ Why it is shaped this way:
 - **Strict serialization.** `self.onmessage` is async, so every message is
   chained onto a single `queue` promise; otherwise a `load` awaiting a download
   could interleave with a `synthesize` against a half-initialized pipeline.
+  `cancel` deliberately bypasses the queue: it must take effect while a long
+  generation is still running.
 - **`ArrayBuffer` transfer, not copy.** Audio chunks are posted with a transfer
   list so multi-megabyte `Float32Array` payloads are moved, not cloned.
+- **Pull-based streaming.** The engine opens a session and then asks for one frame
+  per consumer turn. Backpressure is therefore structural — the worker cannot
+  outrun the consumer because it is never asked to — so memory stays at one frame
+  plus model state with no credit accounting, and every `stream-next` doubles as a
+  cancellation checkpoint. A push protocol would need an explicit high-water mark
+  in the worker; this one cannot buffer unboundedly by construction.
+- **The engine owns `final`.** The worker cannot know a frame is last until its
+  generator ends, so `stream-end` is the signal and the engine emits the single
+  `final: true` chunk. Peeking one frame ahead would double time-to-first-audio.
 - **One model per worker.** Loading a second model throws; the engine therefore
   disposes the previous model before switching, which lets one worker serve
   many voices over time.
@@ -397,10 +428,13 @@ Why it is shaped this way:
   resets), mirroring the core-level retry semantics.
 - **`handleDispose` resets all state in a `finally`** and always acknowledges, so
   the engine never waits forever and the next `load()` never sees a torn-down
-  pipeline.
+  pipeline. The engine's own `dispose()` additionally bounds that wait, because a
+  wedged worker must not keep the call pending; `terminate()` is what actually
+  guarantees the resources are gone.
 - **Cancellation is cooperative.** The worker cannot stop mid-inference; it
-  checks a cancel flag between emitted chunks, and the engine drops any late
-  chunks whose request is no longer pending.
+  checks a cancel flag between emitted frames, and the engine drops any late
+  frames whose request is no longer pending. Because the engine never has more
+  than one pull outstanding, "late" means "after `cancel`", not "after a race".
 
 ### 4.4 Engine-side request, ordering, abort, and cache logic
 
@@ -431,32 +465,47 @@ Why it is shaped this way:
 
 ### 4.5 Model and voice registry
 
-`createDefaultRegistry()` turns a language/voice map into `ModelManifest`
-descriptors — the same shape as `ModelDescriptor` in
-`lite-translator/packages/core/src/registry.ts`, extended by a voice manifest:
+`createDefaultRegistry()` maps a language to a core `ModelManifest` and every voice
+to a `VoiceManifest`. Both are the core's own types, not an engine-private shape, so
+budgets and offline state stay engine-agnostic:
 
 ```text
-{
-  id, version, engine: "onnx", engineModelId,
+ModelManifest {
+  id: "onnx-community/phonon-31m-en-ONNX",
+  revision: "<40-char commit sha>",   // immutable pin, never "main"
+  license: "Apache-2.0",
+  family: "phonon",                   // selects the ModelProfile used to run it
+  sampleRate: 24000,                  // declared per model, never assumed globally
   files: [
-    tokenizer_config.json, config.json, tokenizer.json,
-    onnx/<graph>_<dtype>.onnx, ...
-    voices/<voice>.bin, voices/<voice>.json
-  ],
-  metadata: {
-    source: "huggingface",
-    revision: "<commit-sha>",       // immutable pin, not "main"
-    profile: "encoder-decoder-v1",  // selects the ModelProfile used to run it
-    sampleRate: 24000,              // declared per model, never assumed globally
-    channels: 1,
-    voices: [{ id, language, files, license }]
-  }
+    { path: "config.json",         size: 4952 },
+    { path: "tokenizer.json",      size: 303009 },
+    { path: "tokenizer_config.json", size: 144 },
+    { path: "onnx/flow_lm.onnx",   size: 120089751 },   // fp32
+    { path: "onnx/mimi_decoder.onnx", size: 41267821 },
+    ... every quantized variant, so core can price any of them
+  ]
+}
+
+VoiceManifest {
+  id, modelId, language: "en", revision, license: "Apache-2.0",
+  sampleRate: 24000,
+  files: [{ path: "voices/<voice>.bin", size: 256000 }]
 }
 ```
 
+The manifest lists **every** dtype variant; the engine reports only the files its
+resolved dtype loads. Otherwise `isCached()` would demand weights that are never
+read and `removeModel()` would delete weights belonging to another configuration.
+
+Every registered voice reports the language `"en"`. The repository's voices have
+design accents (`en-US`, `en-GB`, …), but this profile does not switch
+pronunciation, so advertising `"en-GB"` as a _language_ would make
+`supports("en-GB")` a promise it cannot keep; the accent travels as a label in
+`VoiceInfo.description` instead.
+
 Three entry points for customization:
 `createOnnxEngine({ models })` for a different model map,
-`createOnnxEngine({ registry })` for a fully custom static registry, and
+`createOnnxEngine({ registry })` for a fully custom registry, and
 `createOnnxEngine({ profiles })` to register additional `ModelProfile`
 implementations. Selecting a model therefore never requires a new package, and
 adding a model family never changes the core API.
@@ -691,9 +740,11 @@ Deliberate differences to plan for:
 
 ```text
 packages/core            tsdown -> dist/index.js + index.d.ts (browser/neutral, ESM, dts)
-packages/engine-onnx     tsdown -> dist/index.js + dist/worker.js (+ index.d.ts)
-                                   alwaysBundle: ["@lite-speech/core",
-                                                  "@huggingface/transformers"]
+packages/engine-onnx     tsdown -> dist/index.js + dist/worker.js (+ d.ts)   [platform: browser]
+                                   deps.alwaysBundle: ["@lite-speech/core",
+                                                       "@huggingface/transformers"]
+                         tsdown -> dist/node.mjs + dist/node.d.mts           [platform: node]
+                                   deps.alwaysBundle: ["@lite-speech/core"]
 examples/demo/index.html  bundler-free demo against the built ESM output
 bench/benchmark           cold start, time-to-first-audio, RTF, memory; JSON reports
 bench/quality             listening-test corpus, determinism, chunk-consistency
@@ -704,11 +755,20 @@ Packaging conventions carried over from `lite-translator`:
 - ESM only, `"type": "module"`, `exports` map with `types` + `import`.
 - `"sideEffects": false` so bundlers can tree-shake.
 - `files: ["dist", "README.md", "LICENSE"]`; `publishConfig.access: "public"`.
-- The engine bundles core and Transformers.js inline: browser bare imports do not
-  resolve inside a worker, and the demo loads native ESM without a bundler. This
-  is why `worker.js` is a separate `exports` subpath.
+- The engine has **two builds**, because the two runtimes disagree about the
+  platform. The browser build bundles core and Transformers.js inline — a browser
+  cannot resolve a bare specifier inside a worker, and the demo loads native ESM
+  without a bundler, which is why `worker.js` is a separate `exports` subpath. The
+  Node build targets `node22`, keeps the `node:` builtins external, and leaves
+  Transformers.js as an ordinary dependency rather than inlining 1.5 MB into it.
 - `core` and `engine-onnx` are versioned independently; `engine-onnx` declares
   `@lite-speech/core` as a **peer** dependency with a compatible range.
+- Bundling core into the engine means an application can end up with two copies of
+  the core module. That is why `isT.tsError()` is a **structural** guard (`name` +
+  `code` + `message`) rather than `instanceof`: with two class objects, an
+  `instanceof` check would reject the engine's `ABORTED` and the core boundary would
+  re-wrap it as `STREAM_FAILED`. That guard is `isTtsError()`, and a core test asserts
+  a foreign-shaped `TtsError` still passes it.
 - `tsconfig.base.json` is strict: `strict`, `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, `isolatedModules`.
   `exactOptionalPropertyTypes` shapes the API style — optional properties are
