@@ -203,6 +203,7 @@ Training or fine-tuning, voice cloning, automatic routing across many model fami
 
 ## 8. Technical References
 
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — proposed architecture (package split, engine contract, worker protocol, audio model, streaming, assets)
 - [ONNX Community: Phonon 31M EN — model card, ONNX variants, examples](https://huggingface.co/onnx-community/phonon-31m-en-ONNX)
 - [Gradium: Phonon 40M German — license and model metadata](https://huggingface.co/gradium/phonon-40m-de)
 - [Gradium: Phonon runtime and browser library](https://github.com/gradium-ai/xn-ptts/blob/main/ptts-wasm/js/README.md)
