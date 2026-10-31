@@ -10,6 +10,8 @@ test-results/
 **/__screenshots__/
 bench/**/__screenshots__/
 packages/**/tests/__screenshots__/
+spike/out/
+spike/.cache/
 *.gif
 *.png
 *.jpg
@@ -22,4 +24,6 @@ lite-speech-core-*.tgz
 lite-speech-engine-onnx-*.tgz
 lite-speech-mvp.md
 AGENTS.md
+.agents
+skills-lock.json
 npm-library-tooling.md

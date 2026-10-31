@@ -1,6 +1,7 @@
 # Roadmap of `lite-speech`
 
-> **Status:** M0 (repository and toolchain foundation) implemented; M1 is next.
+> **Status:** M0 (repository and toolchain foundation) and M1 (inference spike)
+> implemented; M2 is next.
 > Milestones below keep their checklist state.
 > **Date:** October 31, 2026
 > **Target:** First public release `0.1.0` of `@lite-speech/core` and
@@ -113,30 +114,37 @@ public APIs only?_
 
 **Tasks**
 
-- [ ] Pin exact versions of `@huggingface/transformers`, `onnxruntime-web`, and
+- [x] Pin exact versions of `@huggingface/transformers`, `onnxruntime-web`, and
       Node LTS; record the resolved model revision (commit SHA, never `main`).
-- [ ] Script the flow outside the library (`spike/` folder, not published) for
+- [x] Script the flow outside the library (`spike/` folder, not published) for
       both Node.js and a browser page.
-- [ ] Verify output properties: 24 kHz, mono, `Float32Array` in `[-1, 1]`, and
+- [x] Verify output properties: 24 kHz, mono, `Float32Array` in `[-1, 1]`, and
       audible speech in a listening check.
-- [ ] Compare `q4f16`, `q4`, and `fp32` graphs for download size, load time,
+- [x] Compare `q4f16`, `q4`, and `fp32` graphs for download size, load time,
       real-time factor, and perceived quality.
-- [ ] Classify the streaming behaviour honestly: true incremental frames,
+- [x] Classify the streaming behaviour honestly: true incremental frames,
       buffered sentence chunks, or full-utterance only.
-- [ ] Document WebGPU behaviour for the required operators, or record that WASM
+- [x] Document WebGPU behaviour for the required operators, or record that WASM
       is the only viable path for the MVP.
-- [ ] Write `docs/spike/transformers-js-phonon.md` with commands, versions,
+- [x] Write `docs/spike/transformers-js-phonon.md` with commands, versions,
       measured numbers, observed limitations, and the recommendation.
 
 **Exit gate**
 
-- A documented command reproduces audio in **Node.js and Chromium** from a
-  clean install.
-- Private tokenizer fields or unpublished branches are **not** required; if they
-  are, the MVP falls back to a validated public low-level path or the feature is
-  deferred.
-- The streaming classification and the license statement are recorded.
-- A written go/no-go decision exists, and M2 API work is aligned with it.
+- [x] A documented command reproduces audio in **Node.js and Chromium** from a
+      clean install.
+- [x] Private tokenizer fields or unpublished branches are **not** required; if they
+      are, the MVP falls back to a validated public low-level path or the feature is
+      deferred.
+- [x] The streaming classification and the license statement are recorded.
+- [x] A written go/no-go decision exists, and M2 API work is aligned with it.
+
+**Outcome:** GO on the low-level `PreTrainedModel` path, NO-GO on
+`pipeline("text-to-speech", …)` in `@huggingface/transformers@4.3.2` (the Phonon
+model class is still unmerged in PRs #1811/#1825). Byte fallback was replaced with
+a public-member encoder that reproduces the model card's private-field workaround
+byte for byte. Measurements, limitations, and the constraints handed to M2/M3 are
+in [spike/transformers-js-phonon.md](./spike/transformers-js-phonon.md).
 
 > **Hard rule:** no `core` API is designed around Phonon specifics before this
 > gate passes.

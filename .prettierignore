@@ -3,3 +3,5 @@ dist/
 coverage/
 package-lock.json
 CHANGELOG.md
+spike/out/
+spike/.cache/

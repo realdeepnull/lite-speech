@@ -1,0 +1,15 @@
+{
+  "name": "@lite-speech/spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M1 inference spike: pinned Transformers.js + Phonon 31M EN. Never published.",
+  "scripts": {
+    "node": "node node.mjs",
+    "serve": "node serve.mjs",
+    "compare": "node compare.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2"
+  }
+}

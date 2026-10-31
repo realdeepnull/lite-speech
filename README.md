@@ -32,12 +32,17 @@ Pre-release. Milestones are tracked in the [roadmap](docs/ROADMAP.md):
 | Milestone | Theme                 | State   |
 | --------- | --------------------- | ------- |
 | M0        | Foundation            | done    |
-| M1        | Inference spike       | next    |
-| M2        | Core MVP              | planned |
+| M1        | Inference spike       | done    |
+| M2        | Core MVP              | next    |
 | M3        | ONNX engine MVP       | planned |
 | M4        | Assets & provisioning | planned |
 | M5        | Measurement           | planned |
 | M6        | Beta `0.1.0`          | planned |
+
+The M1 evidence — pins, measured sizes and latencies, streaming classification, and
+the go/no-go decision — is in
+[docs/spike/transformers-js-phonon.md](docs/spike/transformers-js-phonon.md). Its
+runnable scripts live in [spike/](spike) and are never published.
 
 ## Packages
 
