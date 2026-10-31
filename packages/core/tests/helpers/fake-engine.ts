@@ -3,13 +3,14 @@ import type {
   AudioChunk,
   AudioResult,
   DebugCallback,
+  IntegrityReport,
   ProgressCallback,
   SynthesizeOptions,
   TtsCapabilities,
   TtsEngine,
   TtsRequest,
 } from "../../src/index";
-import { createAssetPlan } from "../../src/index";
+import { createAssetPlan, createIntegrityReport } from "../../src/index";
 
 /** A scripted engine used by every core test; no runtime, no DOM, no network. */
 export interface FakeEngineOptions {
@@ -20,11 +21,21 @@ export interface FakeEngineOptions {
   readonly chunks?: number;
   readonly samplesPerChunk?: number;
   readonly cached?: boolean;
-  readonly assetFiles?: readonly { path: string; size?: number; cached: boolean }[];
+  readonly assetFiles?: readonly {
+    path: string;
+    size?: number;
+    sha256?: string;
+    cached: boolean;
+    cachedSize?: number;
+  }[];
   readonly withDescribeAssets?: boolean;
   readonly withPrepare?: boolean;
   readonly withRemoveModel?: boolean;
   readonly withCapabilities?: boolean;
+  /** Adds `verifyAssets()`; `integrity` decides what it reports. */
+  readonly withVerifyAssets?: boolean;
+  /** Partial integrity report `verifyAssets()` returns; defaults to "everything fine". */
+  readonly integrity?: Partial<Omit<IntegrityReport, "ok">>;
   readonly loadError?: unknown;
   readonly synthesizeError?: unknown;
   readonly streamError?: unknown;
@@ -52,6 +63,7 @@ interface FakeEngineStats {
   prepare: number;
   removeModel: number;
   describeAssets: number;
+  verifyAssets: number;
   isCached: number;
   lastSynthesizedText: string | undefined;
   lastProgress: ProgressCallback | undefined;
@@ -76,6 +88,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}): FakeEngine {
     prepare: 0,
     removeModel: 0,
     describeAssets: 0,
+    verifyAssets: 0,
     isCached: 0,
     lastSynthesizedText: undefined,
     lastProgress: undefined,
@@ -157,6 +170,12 @@ export function createFakeEngine(options: FakeEngineOptions = {}): FakeEngine {
       stats.removeModel += 1;
     };
   }
+  if (options.withVerifyAssets) {
+    engine.verifyAssets = async () => {
+      stats.verifyAssets += 1;
+      return createIntegrityReport(options.integrity);
+    };
+  }
   if (options.withCapabilities) {
     engine.capabilities = (): TtsCapabilities => ({
       engine: engine.id,
@@ -184,6 +203,8 @@ function buildPlan(options: FakeEngineOptions, request: TtsRequest): AssetPlan {
       role: "model" as const,
       cached: file.cached,
       ...(file.size !== undefined && { size: file.size }),
+      ...(file.sha256 !== undefined && { sha256: file.sha256 }),
+      ...(file.cachedSize !== undefined && { cachedSize: file.cachedSize }),
     })),
   });
 }

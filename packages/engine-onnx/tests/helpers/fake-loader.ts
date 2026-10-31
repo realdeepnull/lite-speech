@@ -18,6 +18,7 @@ export interface FakeLoaderStats {
   lastVoice: string | undefined;
   lastDtype: string | undefined;
   lastDevice: string | undefined;
+  lastVoiceSha256: string | undefined;
 }
 
 /** Options for {@link createFakeLoader}. */
@@ -74,6 +75,7 @@ export function createFakeLoader(options: FakeLoaderOptions = {}): FakeLoader {
     lastVoice: undefined,
     lastDtype: undefined,
     lastDevice: undefined,
+    lastVoiceSha256: undefined,
   };
   const frames = options.frames ?? 3;
   const samplesPerFrame = options.samplesPerFrame ?? 1_920;
@@ -83,6 +85,7 @@ export function createFakeLoader(options: FakeLoaderOptions = {}): FakeLoader {
     stats.lastVoice = voice;
     stats.lastDtype = loadOptions.dtype;
     stats.lastDevice = loadOptions.device;
+    stats.lastVoiceSha256 = loadOptions.voiceSha256;
     stats.voices.push(voice);
     for (const event of options.progress ?? []) {
       loadOptions.onProgress(event);

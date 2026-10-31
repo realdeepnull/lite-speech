@@ -52,8 +52,8 @@ Pre-release. Milestones are tracked in the [roadmap](docs/ROADMAP.md):
 | M1        | Inference spike       | done    |
 | M2        | Core MVP              | done    |
 | M3        | ONNX engine MVP       | done    |
-| M4        | Assets & provisioning | next    |
-| M5        | Measurement           | planned |
+| M4        | Assets & provisioning | done    |
+| M5        | Measurement           | next    |
 | M6        | Beta `0.1.0`          | planned |
 
 The M1 evidence — pins, measured sizes and latencies, streaming classification, and
@@ -95,6 +95,7 @@ Tooling is added just in time; the adoption plan lives in the
 
 - [Product concept](docs/lite-speech-concept.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Provisioning](docs/provisioning.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## License

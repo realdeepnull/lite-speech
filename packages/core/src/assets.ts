@@ -58,7 +58,24 @@ export interface AssetPlanFile extends AssetFile {
   readonly role: AssetRole;
   /** Whether the file is available locally. */
   readonly cached: boolean;
+  /**
+   * Size of the on-disk/cache entry, when the engine could measure it.
+   *
+   * Reported separately from the declared {@link AssetFile.size}: a mismatch
+   * means a truncated or foreign file is cached, which is a cache problem the
+   * caller can see rather than a silent one.
+   */
+  readonly cachedSize?: number;
 }
+
+/**
+ * How much of a plan can be proven byte-for-byte.
+ *
+ * - `"declared"` — every file declares a SHA-256 digest.
+ * - `"partial"` — some files do.
+ * - `"none"` — no file does, so integrity cannot be verified, only presence.
+ */
+export type AssetIntegrityState = "declared" | "partial" | "none";
 
 /**
  * The complete, resolved asset set for one model + voice combination.
@@ -82,12 +99,26 @@ export interface AssetPlan {
   readonly complete: boolean;
   /** Whether every file declares a size (a budget can be proven). */
   readonly sizesComplete: boolean;
+  /** Whether every file declares a SHA-256 digest (integrity can be proven). */
+  readonly hashesComplete: boolean;
+  /** How much of the plan is covered by declared digests. */
+  readonly integrity: AssetIntegrityState;
   /** Licenses involved, model first, then voice. */
   readonly licenses: readonly string[];
   /** Paths of the files that are not cached. */
   readonly missing: readonly string[];
   /** Paths of the files whose size is unknown. */
   readonly unknownSizes: readonly string[];
+  /** Paths of the files that declare no digest. */
+  readonly unverified: readonly string[];
+  /**
+   * Paths of cached files whose measured size disagrees with the declared size.
+   *
+   * A truncated download is the failure this catches: the file exists, so the
+   * cache says "cached", but the bytes are not the pinned asset. Reported, not
+   * silently repaired — repairing means downloading, which needs consent.
+   */
+  readonly sizeMismatches: readonly string[];
 }
 
 /** Input of {@link createAssetPlan}. */
@@ -125,8 +156,11 @@ export function createAssetPlan(input: AssetPlanInput): AssetPlan {
   let totalBytes = 0;
   let cachedBytes = 0;
   let sizesComplete = true;
+  let hashesComplete = true;
   const missing: string[] = [];
   const unknownSizes: string[] = [];
+  const unverified: string[] = [];
+  const sizeMismatches: string[] = [];
 
   for (const file of input.files) {
     if (seen.has(file.path)) {
@@ -147,9 +181,22 @@ export function createAssetPlan(input: AssetPlanInput): AssetPlan {
       if (file.cached) {
         cachedBytes += file.size;
       }
+      if (file.cached && file.cachedSize !== undefined && file.cachedSize !== file.size) {
+        sizeMismatches.push(file.path);
+      }
     } else {
       sizesComplete = false;
       unknownSizes.push(file.path);
+    }
+    if (file.sha256 === undefined) {
+      hashesComplete = false;
+      unverified.push(file.path);
+    } else if (!/^[0-9a-f]{64}$/u.test(file.sha256)) {
+      throw new TtsError(
+        TTS_ERROR_CODES.INVALID_ARGUMENT,
+        `Invalid sha256 for asset ${file.path}: expected 64 lowercase hex characters`,
+        { details: { path: file.path, sha256: file.sha256 } },
+      );
     }
     if (!file.cached) {
       missing.push(file.path);
@@ -163,6 +210,12 @@ export function createAssetPlan(input: AssetPlanInput): AssetPlan {
     }
   }
 
+  const integrity: AssetIntegrityState = hashesComplete
+    ? "declared"
+    : unverified.length === input.files.length
+      ? "none"
+      : "partial";
+
   return {
     modelId: input.modelId,
     ...(input.voice !== undefined && { voice: input.voice }),
@@ -173,9 +226,13 @@ export function createAssetPlan(input: AssetPlanInput): AssetPlan {
     missingBytes: totalBytes - cachedBytes,
     complete: missing.length === 0,
     sizesComplete,
+    hashesComplete,
+    integrity,
     licenses,
     missing,
     unknownSizes,
+    unverified,
+    sizeMismatches,
   };
 }
 
@@ -268,4 +325,60 @@ export function assertBudget(plan: AssetPlan, maxDownloadMB: number | undefined)
     );
   }
   return estimate;
+}
+
+/** The outcome of verifying declared digests against cached files. */
+export interface IntegrityReport {
+  /** Paths whose measured digest matched the declared one. */
+  readonly verified: readonly string[];
+  /** Paths whose measured digest did not match the declared one. */
+  readonly mismatched: readonly string[];
+  /** Paths that declare no digest, so nothing could be verified. */
+  readonly unverified: readonly string[];
+  /** Paths the engine could not read at all. */
+  readonly unreadable: readonly string[];
+  /** `true` when every verified digest matched and nothing was unreadable. */
+  readonly ok: boolean;
+}
+
+/**
+ * Normalizes what an engine reports about integrity checks into one answer.
+ *
+ * A file that could not be read is never counted as verified: "I could not look"
+ * and "I looked and it was fine" are different outcomes, and conflating them is
+ * exactly how a corrupted cache turns into a wrong `ok: true`.
+ */
+export function createIntegrityReport(
+  parts: Partial<Omit<IntegrityReport, "ok">> = {},
+): IntegrityReport {
+  const verified = [...(parts.verified ?? [])];
+  const mismatched = [...(parts.mismatched ?? [])];
+  const unverified = [...(parts.unverified ?? [])];
+  const unreadable = [...(parts.unreadable ?? [])];
+  return {
+    verified,
+    mismatched,
+    unverified,
+    unreadable,
+    ok: mismatched.length === 0 && unreadable.length === 0,
+  };
+}
+
+/**
+ * Rejects an integrity report that found a corrupted or unreadable asset.
+ *
+ * `ASSET_INTEGRITY_FAILED` is the only honest answer here: the caller asked for
+ * a verified cache, and the alternative — quietly deleting and re-downloading —
+ * would download without consent.
+ */
+export function assertIntegrity(report: IntegrityReport): IntegrityReport {
+  if (report.ok) {
+    return report;
+  }
+  const failed = [...report.mismatched, ...report.unreadable];
+  throw new TtsError(
+    TTS_ERROR_CODES.ASSET_INTEGRITY_FAILED,
+    `${failed.length} cached asset(s) failed verification: ${failed.join(", ")}`,
+    { details: { mismatched: report.mismatched, unreadable: report.unreadable } },
+  );
 }

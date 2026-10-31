@@ -8,9 +8,10 @@ inference in a Web Worker, resolves model profiles, keeps a pinned model and
 voice registry, and manages cache state. It is the only package allowed to
 depend on an ML runtime, and it never publishes model weights.
 
-> **Status:** milestone M3. One verified profile (Phonon 31M EN, `fp32`/`q4`/`q4f16`)
-> synthesizes through the public core API in Chromium and Node.js. Streaming
-> delivers true incremental 80 ms frames.
+> **Status:** milestones M3 and M4. One verified profile (Phonon 31M EN,
+> `fp32`/`q4`/`q4f16`) synthesizes through the public core API in Chromium and Node.js.
+> Streaming delivers true incremental 80 ms frames. Provisioning is budgeted,
+> verified against pinned SHA-256 digests, and rolled back on failure.
 
 ## Install
 
@@ -85,11 +86,33 @@ await tts.isCached(); // model *and* voice files, from Cache Storage
 await tts.estimateDownload(); // what a consent dialog shows, before any request
 
 // Explicit provisioning, after which strict offline works with the network disabled.
-await tts.prepare({ allowNetwork: true, maxDownloadMB: 80 });
+const plan = await tts.prepare({ allowNetwork: true, maxDownloadMB: 80, verify: true });
+plan.integrity; // "declared": every file has a pinned SHA-256
 ```
+
+What the engine contributes to that policy:
+
+- **Sizes and digests from the pinned manifest.** Every file in the Phonon registry
+  declares its byte size and its Hub blob digest, at the commit SHA the M1 spike
+  measured. `estimateDownload()` is therefore exact — 67 989 146 bytes for `q4`
+  including the default voice — not an approximation.
+- **Per-file cache state, measured.** `describeAssets()` reports `cached`, the
+  manifest `size`, and the `cachedSize` it actually found. A disagreement is a
+  truncated file, which strict offline refuses to synthesize from.
+- **Integrity verification.** `tts.verifyAssets()` reads the cached bytes back and
+  hashes them: `crypto.subtle` over Cache Storage in a browser, `node:crypto` over the
+  filesystem cache in Node.js. The voice embedding is checked _before_ it is cached, so
+  a corrupt download never becomes a corrupt cache.
+- **All-or-nothing provisioning.** A failed `prepare()` removes only the files that
+  attempt added, so a retry starts from the state it began with.
+- **Eviction across every cache.** `removeModel()` disposes the session first, then
+  deletes each file by URL from every Cache Storage cache and the filesystem layout.
 
 Voice embeddings are written to the same Cache Storage cache the model files use, so
 `isCached()` is honest about them and `removeModel()` removes them.
+
+Build-time recipes (Node.js filesystem cache, Playwright-warmed browser profile) are in
+[provisioning.md](https://github.com/realdeepnull/lite-speech/blob/main/docs/provisioning.md).
 
 ## Packaging
 
@@ -119,6 +142,7 @@ These come from the model profile, not from the engine:
 ## Documentation
 
 - [Architecture](https://github.com/realdeepnull/lite-speech/blob/main/docs/ARCHITECTURE.md)
+- [Provisioning](https://github.com/realdeepnull/lite-speech/blob/main/docs/provisioning.md)
 - [Roadmap](https://github.com/realdeepnull/lite-speech/blob/main/docs/ROADMAP.md)
 - [M1 inference spike](https://github.com/realdeepnull/lite-speech/blob/main/docs/spike/transformers-js-phonon.md)
 - [Product concept](https://github.com/realdeepnull/lite-speech/blob/main/docs/lite-speech-concept.md)

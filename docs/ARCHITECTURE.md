@@ -616,6 +616,45 @@ engine's optional `prepare()`/`assetPlan()` members, so the policy (budget,
 consent, offline transitions) lives in one place while the URLs remain
 engine-specific. A CLI is a later addition and must not be required for the MVP.
 
+### 7.1 Where the policy is enforced
+
+```
+synthesize() ─┐
+stream()     ─┼─> Tts.#assertOfflineUsable() ─> engine.load()
+preload()    ─┘        │
+                       └─> describeAssets() / isCached() / sizeMismatches
+```
+
+Every path that can reach `engine.load()` — the only operation that may
+download — passes through one gate. Enforcing it per call site instead is how
+`preload()` becomes an accidental bypass: it is the method a caller reaches for
+to warm up _without_ synthesizing, which is exactly the case the policy exists
+for.
+
+### 7.2 Integrity is a claim with an evidence state
+
+`AssetPlan.integrity` reports `"declared" | "partial" | "none"` rather than a
+boolean, because "I have not verified this" and "I verified it and it is fine"
+are different answers. Verification itself is explicit —
+`prepare({ verify: true })` or `tts.verifyAssets()` — since hashing a 68 MB
+profile on every page load costs more than it protects. A download of the voice
+embedding, which the library fetches itself, is checked before the bytes enter
+the cache: a corrupt cache entry is a permanent silent wrong answer, while a
+failed download is a retry.
+
+### 7.3 Cached size is a second, cheap signal
+
+`describeAssets()` reports `cachedSize` next to the declared `size`. A mismatch
+means a truncated or foreign file is cached, which makes strict offline reject
+with `OFFLINE_ASSETS_MISSING` instead of synthesizing from bad weights. It
+costs a `stat` per file rather than a read of every byte, so it can run on every
+cold start.
+
+A failed `prepare()` rolls the cache back to the state it started from: one
+provisioning attempt is one transaction, and a partial download never reports as
+cached. Details and two build-time provisioning recipes are in
+[provisioning.md](./provisioning.md).
+
 ---
 
 ## 8. End-to-end control flow

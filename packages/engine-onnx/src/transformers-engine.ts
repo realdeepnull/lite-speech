@@ -18,17 +18,20 @@
  */
 import {
   createAssetPlan,
+  createIntegrityReport,
   isAbortError,
   isTtsError,
   normalizeTtsError,
   TTS_ERROR_CODES,
   TtsError,
+  type AssetFile,
   type AssetPlan,
   type AssetPlanFile,
   type AudioChunk,
   type AudioResult,
   type DebugCallback,
   type DebugEvent,
+  type IntegrityReport,
   type ModelManifest,
   type ProgressCallback,
   type StreamingClass,
@@ -91,6 +94,12 @@ export interface FsProbe {
     urls: readonly string[],
   ): Promise<readonly { readonly cached: boolean; readonly size?: number }[]>;
   remove(urls: readonly string[]): Promise<void>;
+  /**
+   * Reads one cached file and returns its SHA-256 digest, or `undefined` when the file cannot be
+   * read. Optional: a probe without it makes `verifyAssets()` report the file as unreadable rather
+   * than claim it was verified.
+   */
+  sha256?(url: string): Promise<string | undefined>;
 }
 
 /** Everything the engine needs beyond the manifests. */
@@ -109,6 +118,7 @@ export interface TransformersEngineOptions {
           readonly revision: string;
           readonly device: string;
           readonly dtype: string;
+          readonly voiceSha256?: string | undefined;
           readonly onProgress: (event: ProgressResponse["event"]) => void;
         },
         voice: string,
@@ -224,6 +234,10 @@ export class TransformersEngine implements TtsEngine {
    *
    * Sizes come from the manifest, so a plan is complete before anything is downloaded — this
    * is what lets the core check a budget *before* touching the network.
+   *
+   * Each file also carries its resolved URL, because the manifest path alone is not enough to
+   * evict or verify a cache entry: Transformers.js keys the cache by the resolved URL, so the
+   * plan is the one place where "which file is this" becomes "which cache key is this".
    */
   async describeAssets(request: TtsRequest): Promise<AssetPlan> {
     this.#assertNotDisposed();
@@ -232,12 +246,18 @@ export class TransformersEngine implements TtsEngine {
     const files = this.#manifestFiles(model, voice);
     const urls = files.map((file) => this.#url(model, file.path));
     const states = await this.#cacheStates(urls);
-    const planFiles: AssetPlanFile[] = files.map((file, index) => ({
-      path: file.path,
-      role: file.path.startsWith("voices/") ? "voice" : "model",
-      cached: states[index]?.cached ?? false,
-      ...(file.size !== undefined && { size: file.size }),
-    }));
+    const planFiles: AssetPlanFile[] = files.map((file, index) => {
+      const state = states[index];
+      return {
+        path: file.path,
+        role: file.path.startsWith("voices/") ? "voice" : "model",
+        cached: state?.cached ?? false,
+        url: urls[index] ?? this.#url(model, file.path),
+        ...(file.size !== undefined && { size: file.size }),
+        ...(file.sha256 !== undefined && { sha256: file.sha256 }),
+        ...(state?.size !== undefined && { cachedSize: state.size }),
+      };
+    });
     return createAssetPlan({
       modelId: model.id,
       ...(voice !== undefined && { voice: voice.id }),
@@ -250,16 +270,120 @@ export class TransformersEngine implements TtsEngine {
   }
 
   /**
-   * Explicit, opt-in provisioning.
+   * Reads every cached file of `request` and compares its digest with the manifest.
    *
-   * The core has already checked the budget, so this only has to make the assets exist.
-   * Loading is the only download path Transformers.js offers, so `prepare()` loads and leaves
-   * the model resident: the caller asked for a download, and making them wait for the same
-   * bytes twice would be worse than keeping the session.
+   * Only cached files are read: a missing file is already reported by `describeAssets()`, and
+   * reading it would turn a verification into a download. Files without a declared digest are
+   * reported as unverified instead of assumed good, which is what keeps `ok` honest.
+   */
+  async verifyAssets(request: TtsRequest): Promise<IntegrityReport> {
+    this.#assertNotDisposed();
+    const plan = await this.describeAssets(request);
+    const verified: string[] = [];
+    const mismatched: string[] = [];
+    const unreadable: string[] = [];
+    const unverified: string[] = [];
+    await Promise.all(
+      plan.files.map(async (file) => {
+        if (!file.cached) {
+          return;
+        }
+        if (file.sha256 === undefined) {
+          unverified.push(file.path);
+          return;
+        }
+        const actual = file.url === undefined ? undefined : await this.#digest(file.url);
+        if (actual === undefined) {
+          unreadable.push(file.path);
+          return;
+        }
+        if (actual === file.sha256) {
+          verified.push(file.path);
+        } else {
+          mismatched.push(file.path);
+        }
+      }),
+    );
+    return createIntegrityReport({ verified, mismatched, unverified, unreadable });
+  }
+
+  /** Digest of one cached URL, from Cache Storage when available and the filesystem otherwise. */
+  async #digest(url: string): Promise<string | undefined> {
+    if (typeof caches !== "undefined") {
+      try {
+        const digest = await readCachedDigest(url);
+        if (digest !== undefined) {
+          return digest;
+        }
+      } catch {
+        // Fall through: a cache failure must not become a wrong "verified" claim.
+      }
+    }
+    try {
+      return await this.#fsProbe?.sha256?.(url);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Explicit, opt-in provisioning: download and verify, all-or-nothing.
+   *
+   * The core has already checked the budget, so this only has to make the assets exist. Loading
+   * is the only download path Transformers.js offers, so `prepare()` loads and leaves the model
+   * resident: the caller asked for a download, and making them wait for the same bytes twice
+   * would be worse than keeping the session.
+   *
+   * A failed attempt is rolled back to the cache state it started from. Without that, a download
+   * that dies halfway leaves a half-populated cache: `isCached()` correctly says "no", but the
+   * next strict-offline launch sees *some* files and reports a different, less actionable set of
+   * missing assets each time — and a later `removeModel()` could delete files another profile
+   * needed. Rolling back makes one provisioning attempt one transaction.
    */
   async prepare(request: TtsRequest, onProgress?: ProgressCallback): Promise<void> {
     this.#assertNotDisposed();
-    await this.load(request, onProgress);
+    const before = await this.#previouslyCached(request);
+    try {
+      await this.load(request, onProgress);
+    } catch (error) {
+      if (before !== undefined) {
+        await this.#rollback(request, before);
+      }
+      throw error;
+    }
+  }
+
+  /** Paths cached before a provisioning attempt, or `undefined` when that cannot be determined. */
+  async #previouslyCached(request: TtsRequest): Promise<Set<string> | undefined> {
+    try {
+      const plan = await this.describeAssets(request);
+      return new Set(plan.files.filter((file) => file.cached).map((file) => file.path));
+    } catch {
+      // Without a reliable "before" snapshot a rollback would delete files that a previous,
+      // successful provisioning created. Leaving the cache alone is the safer failure.
+      return undefined;
+    }
+  }
+
+  /** Deletes every file a failed provisioning attempt added, restoring the previous state. */
+  async #rollback(request: TtsRequest, before: ReadonlySet<string>): Promise<void> {
+    let after: AssetPlan;
+    try {
+      after = await this.describeAssets(request);
+    } catch {
+      return;
+    }
+    const added = after.files.filter((file) => file.cached && !before.has(file.path));
+    if (added.length === 0) {
+      return;
+    }
+    const urls = added
+      .map((file) => file.url ?? this.#url(this.#requireModel(request), file.path))
+      .filter((url): url is string => url !== undefined);
+    await this.#deleteCached(urls);
+    if (this.#loaded?.model.id === after.modelId) {
+      await this.#disposeLoaded();
+    }
   }
 
   /** Disposes the loaded model and evicts its cached files from every cache. */
@@ -349,6 +473,9 @@ export class TransformersEngine implements TtsEngine {
           device: this.#device,
           dtype: this.#dtype,
           ...(voice !== undefined && { voice: voice.id }),
+          ...(voice?.files.find((file) => file.sha256 !== undefined)?.sha256 !== undefined && {
+            voiceSha256: voice.files.find((file) => file.sha256 !== undefined)!.sha256!,
+          }),
           ...(model.family !== undefined && { profile: model.family }),
         },
         undefined,
@@ -990,10 +1117,7 @@ export class TransformersEngine implements TtsEngine {
    * the files its resolved dtype loads, otherwise `isCached()` would demand weights that are
    * never read and `removeModel()` would delete weights belonging to another configuration.
    */
-  #manifestFiles(
-    model: ModelManifest,
-    voice: VoiceManifest | undefined,
-  ): readonly { readonly path: string; readonly size?: number }[] {
+  #manifestFiles(model: ModelManifest, voice: VoiceManifest | undefined): readonly AssetFile[] {
     const suffix = DTYPE_SUFFIX[this.#dtype];
     return [...model.files, ...(voice?.files ?? [])].filter((file) => {
       if (!file.path.startsWith("onnx/")) {
@@ -1026,7 +1150,6 @@ export class TransformersEngine implements TtsEngine {
     }
     return urls.map(() => ({ cached: false }));
   }
-
   /** Deletes cached URLs from Cache Storage and the filesystem. */
   async #deleteCached(urls: readonly string[]): Promise<void> {
     if (typeof caches !== "undefined") {
@@ -1112,4 +1235,44 @@ function isOfflineError(message: string): boolean {
   return /failed to fetch|networkerror|network request failed|load failed|enotfound|econnrefused|fetch failed/i.test(
     message,
   );
+}
+
+/** SubtleCrypto as exposed by browsers and Node.js, described without a DOM dependency. */
+interface SubtleCryptoLike {
+  digest(algorithm: string, data: BufferSource): Promise<ArrayBuffer>;
+}
+
+/** Returns `crypto.subtle` when the runtime has one, without assuming it does. */
+function getSubtleCrypto(): SubtleCryptoLike | undefined {
+  const crypto = (globalThis as { crypto?: { subtle?: SubtleCryptoLike } }).crypto;
+  return crypto?.subtle?.digest === undefined ? undefined : crypto.subtle;
+}
+
+/** Formats a raw digest as lowercase hex, matching the manifest's `sha256` format. */
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Reads one cached response out of every Cache Storage cache and returns its SHA-256 digest.
+ *
+ * Reads all caches rather than the library's default name for the same reason
+ * {@link readCacheStorage} does: an application may rename its cache, and a verification that
+ * silently reported "unreadable" for a file it could have hashed would be a broken promise.
+ * Returns `undefined` when the entry is absent or the runtime has no `subtle.digest`.
+ */
+async function readCachedDigest(url: string): Promise<string | undefined> {
+  const subtle = getSubtleCrypto();
+  if (subtle === undefined) {
+    return undefined;
+  }
+  const names = await caches.keys();
+  const opened = await Promise.all(names.map((name) => caches.open(name)));
+  for (const cache of opened) {
+    const match = await cache.match(url);
+    if (match !== undefined) {
+      return toHex(await subtle.digest("SHA-256", await match.arrayBuffer()));
+    }
+  }
+  return undefined;
 }

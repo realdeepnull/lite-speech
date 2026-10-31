@@ -1,5 +1,5 @@
 import { TTS_ERROR_CODES, TtsError } from "./errors.js";
-import type { AssetPlan } from "./assets.js";
+import type { AssetPlan, IntegrityReport } from "./assets.js";
 import type {
   AudioChunk,
   AudioResult,
@@ -80,6 +80,15 @@ export interface TtsEngine {
    * strict-offline preconditions; without it the core cannot prove either.
    */
   describeAssets?(request: TtsRequest): Promise<AssetPlan>;
+
+  /**
+   * Verifies cached files against their declared SHA-256 digests.
+   *
+   * Optional because reading every byte of a 68 MB profile is expensive and some
+   * runtimes cannot read their own cache. When absent, the core reports the
+   * integrity state of the plan as unprovable rather than claiming success.
+   */
+  verifyAssets?(request: TtsRequest): Promise<IntegrityReport>;
 
   /** Evicts the cached assets for `request` from every cache the engine uses. */
   removeModel?(request: TtsRequest): Promise<void>;

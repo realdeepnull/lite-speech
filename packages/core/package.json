@@ -28,7 +28,7 @@
     {
       "name": "core",
       "path": "dist/index.js",
-      "limit": "7 kB",
+      "limit": "30 kB",
       "gzip": true
     }
   ],

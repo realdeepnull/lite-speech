@@ -116,6 +116,23 @@ function createFileSystemProbe(cacheDir: string): FsProbe {
         }),
       );
     },
+    async sha256(url) {
+      const path = localPath(url);
+      if (path === undefined) {
+        return undefined;
+      }
+      try {
+        // `createHash` is read here rather than at module scope so the Node entry stays the only
+        // module that touches `node:crypto`, and a bundler for the browser never sees it.
+        const { createHash } = await import("node:crypto");
+        const { readFile } = await import("node:fs/promises");
+        return createHash("sha256")
+          .update(await readFile(path))
+          .digest("hex");
+      } catch {
+        return undefined;
+      }
+    },
   };
 }
 

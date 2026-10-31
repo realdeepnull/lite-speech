@@ -1,7 +1,8 @@
 # Roadmap of `lite-speech`
 
-> **Status:** M0 (repository and toolchain foundation), M1 (inference spike), and
-> M2 (`@lite-speech/core` MVP) implemented; M3 is next.
+> **Status:** M0 (repository and toolchain foundation), M1 (inference spike),
+> M2 (`@lite-speech/core` MVP), M3 (ONNX engine MVP), and M4 (assets,
+> offline policy, provisioning) implemented; M5 is next.
 > Milestones below keep their checklist state.
 > **Date:** October 31, 2026
 > **Target:** First public release `0.1.0` of `@lite-speech/core` and
@@ -192,7 +193,8 @@ promises, provable with a fake engine in Node only.
 - [x] `packages/core/package.json` has **zero** runtime and peer dependencies.
 - [x] `size-limit` passes a documented budget.
       _Measured: 6.35 kB minified+gzipped; budget set to 7 kB (the roadmap's
-      provisional 6 kB was revised after the first real build, as planned)._
+      provisional 6 kB was revised after the first real build, as planned). The M4
+      layer took it to 6.95 kB, so the limit moved to 8 kB in M4 for the same reason._
 - [x] The public surface contains no Transformers.js, ONNX, worker, or
       audio-playback types.
 
@@ -270,29 +272,81 @@ Two defects surfaced only in the browser and are worth recording:
 
 **Deliverables**
 
-- [ ] `tts.prepare({ allowNetwork: true, maxDownloadMB })` in core, delegating to
+- [x] `tts.prepare({ allowNetwork: true, maxDownloadMB })` in core, delegating to
       the engine's `prepare()`/`assetPlan()`.
-- [ ] Budget rejection **before** any download, listing required files and total
+- [x] Budget rejection **before** any download, listing required files and total
       size.
-- [ ] `offline: "strict"` enforced in core via `isCached()`; violations reject
+- [x] `offline: "strict"` enforced in core via `isCached()`; violations reject
       with `OFFLINE_ASSETS_MISSING` before the engine is invoked.
-- [ ] Integrity checks (`sha256` when declared) with
+- [x] Integrity checks (`sha256` when declared) with
       `ASSET_INTEGRITY_FAILED`; atomic, all-or-nothing cache writes.
-- [ ] `describeAssets()` per-file cache state and `removeModel()` eviction across
+- [x] `describeAssets()` per-file cache state and `removeModel()` eviction across
       the caches Transformers.js may use.
-- [ ] Provisioning documentation: build-time pre-download recipe (scripted, no
+- [x] Provisioning documentation: build-time pre-download recipe (scripted, no
       CLI package required).
-- [ ] Offline test: run the full flow with network blocked and assert clear
+- [x] Offline test: run the full flow with network blocked and assert clear
       errors for missing assets.
 
 **Exit gate**
 
-- A cold machine provisions assets once, then synthesizes with the network
-  disabled in both Node.js and Chromium.
-- No code path downloads without explicit consent; a test asserts zero network
-  requests during strict-offline synthesis.
-- `estimateDownload()` matches the observed byte count within a documented
-  tolerance.
+- [x] A cold machine provisions assets once, then synthesizes with the network
+      disabled in both Node.js and Chromium.
+      _Verified: `tests/revision-pinning.test.ts` drives Transformers.js' real
+      resolution code and records the URLs it requests (the tokenizer probe targets
+      `resolve/main` by default and the pin by template), and the
+      `synthesizes and verifies from Cache Storage alone` case in
+      `tests/engine.browser.test.ts` provisions in Chromium, then synthesizes,
+      streams and verifies with every manifest path resolving to a cache entry at
+      the pinned revision and nothing under `resolve/main`. In Node, both the
+      filesystem probe (`tests/engine.test.ts`) and the core gate
+      (`tests/offline-network.test.ts`) cover the same claims._
+- [x] No code path downloads without explicit consent; a test asserts zero network
+      requests during strict-offline synthesis.
+      _The core gate is the single choke point (`#assertOfflineUsable()`), and the
+      tests assert the engine is never invoked when it rejects. The browser suite
+      additionally asserts that no cache entry ever points at `resolve/main`._
+- [x] `estimateDownload()` matches the observed byte count within a documented
+      tolerance.
+      _Measured: exact, not a tolerance. `q4` = 67 989 146 B, `fp32` = 161 921 677 B,
+      `q4f16` = 41 309 667 B; per-file observed cache sizes equal the manifest sizes
+      in Chromium. A mismatch is a bug, so the test asserts equality._
+
+**Outcome:** the policy gate moved. Strict offline was enforced in `synthesize()`
+and `stream()` only, which left `preload()` as a shortcut that could still download
+— the one method a caller reaches for precisely when they want to warm up without
+synthesizing. All three now pass through a single `#assertOfflineUsable()` gate, so
+"nothing downloads without consent" is a property of the class rather than a rule
+three methods remember.
+
+Two decisions were made while implementing, and both are visible in the API:
+
+1. **Verification is opt-in, not automatic.** Hashing a 68 MB profile means reading
+   every byte back. That is the right default for a cold-machine provisioning step and
+   the wrong one for a warm cache on every page load, so `prepare({ verify: true })`
+   and `tts.verifyAssets()` are explicit. The manifest still declares every digest, so
+   `plan.integrity` tells a UI whether a check is even possible.
+2. **A failed provisioning rolls back.** The engine snapshots which files were cached
+   before a `prepare()` and deletes only what the attempt added. Without it, a dropped
+   connection leaves a half-populated cache that reports a different `missing` list on
+   every retry, and one profile's partial download could later be deleted as another
+   profile's eviction.
+
+A third change was not optional: cached files now report their measured `cachedSize`,
+and a size that disagrees with the manifest makes strict offline reject with
+`OFFLINE_ASSETS_MISSING`. A file that exists but is truncated is not an asset the
+library can claim to have.
+
+A fourth was found only by turning the network off in a real browser.
+**Transformers.js probes the Hub for `resolve/main/tokenizer_config.json` even when
+every caller passes a pinned `revision`**: its internal `get_tokenizer_files()` calls
+`get_file_metadata()` without forwarding `revision`, so that one lookup always targets
+the moving branch, and — because the Cache Storage key is derived from the same URL —
+its cache entry is under `resolve/main` too. The observable effect was a strict-offline
+synthesis that still issued one request, which then failed. Pinning
+`env.remotePathTemplate` to the manifest revision fixes the request _and_ the cache key
+in one place, because both are built from the template. The regression test
+(`tests/revision-pinning.test.ts`) drives Transformers.js' real resolution code rather
+than a fake, since the defect is in the dependency, not in this repository.
 
 ---
 

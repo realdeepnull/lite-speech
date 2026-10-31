@@ -1,4 +1,11 @@
-import { assertBudget, estimateDownload, type AssetPlan, type DownloadEstimate } from "./assets.js";
+import {
+  assertBudget,
+  assertIntegrity,
+  estimateDownload,
+  type AssetPlan,
+  type DownloadEstimate,
+  type IntegrityReport,
+} from "./assets.js";
 import { assertTtsEngine, getDefaultEngines, type TtsEngine } from "./engine.js";
 import { normalizeTtsError, TTS_ERROR_CODES, TtsError } from "./errors.js";
 import { prepareText } from "./prepare.js";
@@ -34,9 +41,24 @@ export interface PrepareAssetsOptions {
    * **before** anything is fetched. Omit for "no limit".
    */
   readonly maxDownloadMB?: number;
+  /**
+   * Whether to verify declared SHA-256 digests after provisioning.
+   *
+   * Default `false`: verifying a 68 MB profile costs a full read of every byte,
+   * which is the wrong default for a warm cache. Pass `true` for a cold-machine
+   * provisioning step or a build script, where a corrupt download must be caught
+   * before it is relied on.
+   */
+  readonly verify?: boolean;
   /** Progress callback; defaults to the one passed to `createTts()`. */
   readonly onProgress?: ProgressCallback;
   /** Cancels the provisioning. */
+  readonly signal?: AbortSignal;
+}
+
+/** Options for {@link Tts.verifyAssets}. */
+export interface VerifyAssetsOptions {
+  /** Cancels the verification. */
   readonly signal?: AbortSignal;
 }
 
@@ -128,6 +150,15 @@ export class Tts {
    * a **rejected** load is not memoized, so a transient failure (offline blip,
    * aborted download) does not poison the instance.
    */
+  /**
+   * Loads the model. Single-flight: concurrent calls share one engine load, and
+   * a **rejected** load is not memoized, so a transient failure (offline blip,
+   * aborted download) does not poison the instance.
+   *
+   * In `offline: "strict"` mode this is the second of the two gates, not a way
+   * around the first: the assets are checked exactly like a synthesis would, so
+   * `await tts.preload()` cannot download what `synthesize()` would refuse.
+   */
   async preload(): Promise<void> {
     this.#assertNotDisposed();
     if (this.#ready) {
@@ -136,8 +167,8 @@ export class Tts {
     if (!this.#loadPromise) {
       const start = now();
       this.#debug({ type: "load-start", timestamp: start, engine: this.#engine.id });
-      const load = this.#engine
-        .load(this.#request, this.#onProgress, this.#onDebug)
+      const load = this.#assertOfflineUsable(undefined, "load")
+        .then(() => this.#engine.load(this.#request, this.#onProgress, this.#onDebug))
         .then(() => {
           if (this.#disposed) {
             return;
@@ -257,6 +288,9 @@ export class Tts {
       if (!plan.complete) {
         throw this.#offlineError(plan);
       }
+      if (options.verify) {
+        await this.#verify(options.signal);
+      }
       return plan;
     }
 
@@ -278,7 +312,44 @@ export class Tts {
     }
     this.#assertNotDisposed();
     this.#assertNotAborted(options.signal, "load");
-    return plan;
+    if (options.verify) {
+      await this.#verify(options.signal);
+    }
+    // Re-describe, so the returned plan reports what provisioning actually
+    // produced instead of the pre-download snapshot the caller passed in.
+    return (await this.#describeAssetsQuietly()) ?? plan;
+  }
+
+  /**
+   * Verifies cached assets against their declared SHA-256 digests.
+   *
+   * Throws `ASSET_INTEGRITY_FAILED` when a digest mismatches or a file cannot be
+   * read, and `NOT_SUPPORTED` when the engine cannot verify — an unverifiable
+   * cache must not be reported as a verified one.
+   */
+  async verifyAssets(options: VerifyAssetsOptions = {}): Promise<IntegrityReport> {
+    this.#assertNotDisposed();
+    this.#assertNotAborted(options.signal, "load");
+    const verify = this.#engine.verifyAssets;
+    if (!verify) {
+      throw new TtsError(
+        TTS_ERROR_CODES.NOT_SUPPORTED,
+        `Engine ${this.#engine.id} cannot verify its cached assets`,
+      );
+    }
+    let report: IntegrityReport;
+    try {
+      report = await verify.call(this.#engine, this.#request);
+    } catch (error) {
+      throw normalizeTtsError(
+        error,
+        TTS_ERROR_CODES.ASSET_INTEGRITY_FAILED,
+        "Failed to verify the cached assets",
+      );
+    }
+    this.#assertNotDisposed();
+    this.#assertNotAborted(options.signal, "load");
+    return assertIntegrity(report);
   }
 
   /**
@@ -526,26 +597,39 @@ export class Tts {
       this.#assertNotAborted(options.signal, phase);
       return;
     }
-    if (this.#offline === "strict") {
-      const plan = await this.#describeAssetsQuietly();
-      this.#assertNotDisposed();
-      this.#assertNotAborted(options.signal, phase);
-      if (plan) {
-        if (!plan.complete) {
-          throw this.#offlineError(plan);
-        }
-      } else {
-        // The engine cannot enumerate assets, so the only evidence left is its
-        // own cache check. It is a required part of the contract.
-        const cached = await this.#isCachedFromEngine(options.signal, phase);
-        if (!cached) {
-          throw this.#offlineError(undefined);
-        }
-      }
-    }
+    await this.#assertOfflineUsable(options.signal, phase);
     await this.preload();
     this.#assertNotDisposed();
     this.#assertNotAborted(options.signal, phase);
+  }
+
+  /**
+   * The single strict-offline gate every path into `engine.load()` passes through.
+   *
+   * `synthesize()`, `stream()` and `preload()` all end up loading the model, and
+   * loading is the one operation that can download. Enforcing the policy here
+   * rather than at each call site is what makes "nothing downloads without
+   * consent" a property of the class instead of a rule three methods remember.
+   */
+  async #assertOfflineUsable(signal: AbortSignal | undefined, phase: Phase): Promise<void> {
+    if (this.#offline !== "strict") {
+      return;
+    }
+    const plan = await this.#describeAssetsQuietly();
+    this.#assertNotDisposed();
+    this.#assertNotAborted(signal, phase);
+    if (plan) {
+      if (!plan.complete || plan.sizeMismatches.length > 0) {
+        throw this.#offlineError(plan);
+      }
+    } else {
+      // The engine cannot enumerate assets, so the only evidence left is its
+      // own cache check. It is a required part of the contract.
+      const cached = await this.#isCachedFromEngine(signal, phase);
+      if (!cached) {
+        throw this.#offlineError(undefined);
+      }
+    }
   }
 
   async #isCachedFromEngine(signal: AbortSignal | undefined, phase: Phase): Promise<boolean> {
@@ -595,12 +679,23 @@ export class Tts {
     }
   }
 
+  /** Runs the integrity check through the public path, so both share one error contract. */
+  async #verify(signal: AbortSignal | undefined): Promise<void> {
+    await this.verifyAssets(signal === undefined ? {} : { signal });
+  }
+
   #offlineError(plan: AssetPlan | undefined): TtsError {
     const missing = plan?.missing ?? [];
-    const names = missing.length > 0 ? missing.join(", ") : (plan?.modelId ?? "unknown assets");
+    const mismatched = plan?.sizeMismatches ?? [];
+    const names =
+      missing.length > 0
+        ? missing.join(", ")
+        : mismatched.length > 0
+          ? `${mismatched.join(", ")} (size mismatch)`
+          : (plan?.modelId ?? "unknown assets");
     return new TtsError(
       TTS_ERROR_CODES.OFFLINE_ASSETS_MISSING,
-      `Offline mode is "strict" but the required assets are not cached: ${names}`,
+      `Offline mode is "strict" but the required assets are not usable: ${names}`,
       plan === undefined
         ? {}
         : {
@@ -608,6 +703,7 @@ export class Tts {
               modelId: plan.modelId,
               missing: plan.missing,
               missingBytes: plan.missingBytes,
+              sizeMismatches: plan.sizeMismatches,
             },
           },
     );

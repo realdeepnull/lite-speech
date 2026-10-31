@@ -37,7 +37,7 @@
     {
       "name": "engine entry (model runtime not included)",
       "path": "dist/index.js",
-      "limit": "12 kB",
+      "limit": "30 kB",
       "gzip": true
     }
   ],

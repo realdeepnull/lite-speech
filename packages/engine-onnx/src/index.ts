@@ -45,6 +45,7 @@ export {
   PHONON_VOICES_MANIFEST,
   assetUrl,
   createDefaultRegistry,
+  hubRevisionTemplate,
   voiceAccent,
   type EngineRegistry,
 } from "./models.js";

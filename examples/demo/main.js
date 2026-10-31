@@ -29,7 +29,10 @@ const speak = $("[data-role=speak]");
 const stream = $("[data-role=stream]");
 const stopButton = $("[data-role=stop]");
 const prepareButton = $("[data-role=prepare]");
+const verifyButton = $("[data-role=verify]");
 const evictButton = $("[data-role=evict]");
+const assetsInfo = $("[data-role=assets]");
+const integrityInfo = $("[data-role=integrity]");
 
 /** Engine is created once; `Tts` instances are created per (voice, offline) combination. */
 let engine;
@@ -49,10 +52,24 @@ const append = (message) => {
 };
 
 const busy = (value) => {
-  for (const button of [speak, stream, prepareButton, evictButton]) {
+  for (const button of [speak, stream, prepareButton, verifyButton, evictButton]) {
     button.disabled = value;
   }
   stopButton.disabled = !value || controller === undefined;
+};
+
+/** Renders the cache state, so "offline-capable" is a visible fact rather than a claim. */
+const showPlan = (plan) => {
+  const megabytes = (plan.cachedBytes / 1e6).toFixed(1);
+  const total = (plan.totalBytes / 1e6).toFixed(1);
+  assetsInfo.textContent = plan.complete
+    ? `complete: ${megabytes} MB in ${plan.files.length} files`
+    : `missing: ${plan.missing.length} of ${plan.files.length} files (${total} MB total)`;
+  integrityInfo.textContent =
+    plan.integrity === "declared"
+      ? `sha256 declared for all ${plan.files.length} files`
+      : `sha256 declared for ${plan.files.length - plan.unverified.length} of ${plan.files.length} files`;
+  modelInfo.textContent = plan.complete ? `cached (${megabytes} MB)` : "not cached";
 };
 
 /** Plays mono PCM through an `AudioContext`, which the library deliberately does not do. */
@@ -192,13 +209,15 @@ prepareButton.addEventListener("click", async () => {
     const active = await currentTts();
     const estimate = await active.estimateDownload();
     append(`missing ${(estimate.bytes / 1e6).toFixed(1)} MB in ${estimate.files.length} files`);
-    await active.prepare({
+    const plan = await active.prepare({
       allowNetwork: true,
+      verify: true,
       onProgress,
       signal: controller.signal,
     });
+    showPlan(plan);
     setStatus("assets ready");
-    append(`cached: ${JSON.stringify(await active.isCached())}`);
+    append(`verified: ${JSON.stringify(await active.isCached())}`);
   } catch (error) {
     append(`error: ${error?.message ?? String(error)}`);
     setStatus("prepare failed");
@@ -209,11 +228,37 @@ prepareButton.addEventListener("click", async () => {
   }
 });
 
+verifyButton.addEventListener("click", async () => {
+  busy(true);
+  setStatus("verifying…");
+  try {
+    const active = await currentTts();
+    const report = await active.verifyAssets();
+    integrityInfo.textContent = `verified ${report.verified.length} files, ${
+      report.unverified.length
+    } without a declared digest`;
+    append(`verify ${JSON.stringify(report)}`);
+    setStatus(report.ok ? "cache verified" : "cache failed verification");
+  } catch (error) {
+    integrityInfo.textContent = "verification failed";
+    append(
+      isTtsError(error)
+        ? `verify error ${error.code}: ${error.message}`
+        : `verify error: ${error?.message ?? String(error)}`,
+    );
+    setStatus("verify failed");
+  } finally {
+    busy(false);
+  }
+});
+
 evictButton.addEventListener("click", async () => {
   busy(true);
   try {
     const active = await currentTts();
     await active.removeModel();
+    showPlan(await active.describeAssets());
+    integrityInfo.textContent = "not checked";
     append(`cached: ${JSON.stringify(await active.isCached())}`);
     setStatus("cache cleared");
   } catch (error) {
@@ -255,9 +300,9 @@ void (async () => {
     await probe.dispose();
 
     const active = await currentTts();
-    const cached = await active.isCached();
-    append(`cached: ${JSON.stringify(cached)}`);
-    modelInfo.textContent = cached ? "cached" : "not cached";
+    const plan = await active.describeAssets();
+    showPlan(plan);
+    append(`cached: ${JSON.stringify(plan.complete)}`);
     setStatus("ready");
     busy(false);
   } catch (error) {

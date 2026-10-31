@@ -25,6 +25,7 @@ import {
   type ModelProfile,
   type PhononConfig,
 } from "./profiles.js";
+import { hubRevisionTemplate } from "./models.js";
 
 /** The `phonon` section of the pinned model's `config.json`. */
 interface PhononConfigJson {
@@ -92,6 +93,14 @@ export interface PhononLoadOptions {
   readonly device: string;
   /** Resolved dtype: `"fp32"`, `"q4"`, or `"q4f16"`. */
   readonly dtype: string;
+  /**
+   * Expected SHA-256 of the voice file, when the manifest declares one.
+   *
+   * Checked **before** the bytes are cached, so a corrupted or wrong-revision embedding never
+   * enters the cache: an integrity failure at download time is recoverable by retrying, while a
+   * corrupt cache entry is a permanent silent wrong answer.
+   */
+  readonly voiceSha256?: string | undefined;
   /**
    * Directory for downloaded files. Only meaningful under Node.js, where the library caches to the
    * filesystem; the cache probe must resolve the same directory, so it is set in one place.
@@ -290,11 +299,27 @@ async function loadVoice(
     throw new Error(`Voice download failed with HTTP ${String(response.status)}: ${url}`);
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
+  if (options.voiceSha256 !== undefined) {
+    const actual = await sha256Hex(bytes);
+    if (actual !== options.voiceSha256) {
+      throw new Error(
+        `Voice ${voice}.bin failed its integrity check: expected sha256 ${options.voiceSha256}, ` +
+          `got ${actual ?? "no digest (this runtime has no crypto.subtle)"}`,
+      );
+    }
+  }
   if (cache !== undefined && cached === undefined) {
-    // Store from the bytes already read: a `Response` body can only be consumed once.
+    // Store from the bytes already read: a `Response` body can only be consumed once. The
+    // `content-length` header is set explicitly so `describeAssets()` can report the real size of
+    // a cached voice and compare it with the manifest, like it does for every other file.
     await cache.put(
       url,
-      new Response(bytes, { headers: { "content-type": "application/octet-stream" } }),
+      new Response(bytes, {
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(bytes.byteLength),
+        },
+      }),
     );
   }
   const columnBytes = config.voiceDim * Float32Array.BYTES_PER_ELEMENT;
@@ -314,6 +339,30 @@ async function loadVoice(
 
 /** Cache name Transformers.js uses, so voice files are found by the same lookups. */
 const MODEL_CACHE_NAME = "transformers-cache";
+
+/** Returns the SHA-256 of `bytes` as lowercase hex, or `undefined` without `crypto.subtle`. */
+async function sha256Hex(bytes: Uint8Array): Promise<string | undefined> {
+  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
+  if (subtle === undefined) {
+    return undefined;
+  }
+  const digest = await subtle.digest("SHA-256", bytes as unknown as BufferSource);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Points Transformers.js' remote path template at an immutable revision.
+ *
+ * See {@link hubRevisionTemplate} for why the template, not the URL, is the thing to fix. A
+ * worker hosts exactly one model and the engine disposes before changing model, device, or
+ * dtype, so one pinned template per load is the honest global.
+ */
+function pinRevisionTemplate(revision: string): void {
+  if (revision === "main") {
+    return;
+  }
+  env.remotePathTemplate = hubRevisionTemplate(revision);
+}
 
 /** Opens the model cache, tolerating an origin where Cache Storage is unavailable. */
 async function openModelCache(): Promise<Cache | undefined> {
@@ -347,6 +396,9 @@ export async function loadPhonon(options: PhononLoadOptions, voice: string): Pro
   if (options.cacheDir !== undefined) {
     env.cacheDir = options.cacheDir;
   }
+  // A tokenizer probe inside Transformers.js drops the `revision` option, so it would otherwise
+  // request `resolve/main/...` *and* cache under that key. See `pinRevisionTemplate`.
+  pinRevisionTemplate(options.revision);
 
   const progress_callback = options.onProgress
     ? (info: unknown): void => {

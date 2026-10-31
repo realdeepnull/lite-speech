@@ -211,6 +211,224 @@ describe("engine through createTts()", () => {
     expect(() => createTts({ engine, voice: "no-such-voice" })).toThrow(/does not provide voice/);
   });
 
+  it("reports integrity as declared for the pinned profile", async () => {
+    const probe: FsProbe = {
+      cached: async (urls) => urls.map(() => ({ cached: false })),
+      remove: async () => undefined,
+    };
+    const { engine } = await createEngine({}, {}, probe);
+    const tts = createTts({ engine });
+
+    const plan = await tts.describeAssets();
+    expect(plan.integrity).toBe("declared");
+    expect(plan.hashesComplete).toBe(true);
+    expect(plan.unverified).toEqual([]);
+    // Every file resolves to an absolute URL at the pinned revision, which is what makes an
+    // eviction or a verification able to address a cache entry at all.
+    expect(plan.files.every((file) => file.url?.includes("/resolve/4f0cda7c"))).toBe(true);
+    expect(plan.files.every((file) => file.sha256?.length === 64)).toBe(true);
+    await tts.dispose();
+  });
+
+  it("verifies cached digests through the filesystem probe", async () => {
+    const digests = new Map<string, string>();
+    const probe: FsProbe = {
+      cached: async (urls) => urls.map(() => ({ cached: true, size: 256_000 })),
+      remove: async () => undefined,
+      // Anything not in the map reports a wrong digest, which is a real mismatch rather than an
+      // unreadable file — the two must not be conflated.
+      sha256: async (url) => digests.get(url) ?? "0".repeat(64),
+    };
+    const { engine } = await createEngine({}, {}, probe);
+    const tts = createTts({ engine });
+
+    const plan = await tts.describeAssets();
+    const voice = plan.files.find((file) => file.role === "voice");
+    expect(voice?.sha256).toBeDefined();
+    digests.set(voice!.url!, voice!.sha256!);
+
+    await expect(tts.verifyAssets()).rejects.toSatisfy(
+      (error: unknown) =>
+        isTtsError(error) &&
+        error.code === TTS_ERROR_CODES.ASSET_INTEGRITY_FAILED &&
+        (error.details?.["mismatched"] as readonly string[]).includes("onnx/flow_lm.onnx"),
+    );
+
+    // Give every file its declared digest: verification now passes without touching the network.
+    for (const file of plan.files) {
+      if (file.url !== undefined && file.sha256 !== undefined) {
+        digests.set(file.url, file.sha256);
+      }
+    }
+    await expect(tts.verifyAssets()).resolves.toMatchObject({ ok: true });
+    await tts.dispose();
+  });
+
+  it("reports an unreadable cached file as a failed verification, not a pass", async () => {
+    const probe: FsProbe = {
+      cached: async (urls) => urls.map(() => ({ cached: true, size: 256_000 })),
+      remove: async () => undefined,
+      sha256: async () => undefined,
+    };
+    const { engine } = await createEngine({}, {}, probe);
+    const tts = createTts({ engine });
+
+    await expect(tts.verifyAssets()).rejects.toSatisfy(
+      (error: unknown) =>
+        isTtsError(error) &&
+        error.code === TTS_ERROR_CODES.ASSET_INTEGRITY_FAILED &&
+        (error.details?.["unreadable"] as readonly string[]).length > 0,
+    );
+    await tts.dispose();
+  });
+
+  it("rolls back a partial provisioning so the cache returns to its previous state", async () => {
+    // The loader fails *after* writing the model files, the way a dropped connection does.
+    const written = new Set<string>();
+    const probe: FsProbe = {
+      cached: async (urls) => urls.map((url) => ({ cached: written.has(url) })),
+      remove: async (urls) => {
+        for (const url of urls) {
+          written.delete(url);
+        }
+      },
+    };
+    const loader = createFakeLoader({ loadError: new Error("connection reset") });
+    const engine = await createOnnxEngine({
+      device: "cpu",
+      worker: false,
+      fsProbe: probe,
+      inThreadLoader: async (options, voice) => {
+        // Pretend the download wrote half of the manifest before failing.
+        written.add(
+          "https://huggingface.co/onnx-community/phonon-31m-en-ONNX/resolve/4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4/config.json",
+        );
+        return loader.load(options, voice);
+      },
+    });
+    const tts = createTts({ engine, offline: "allow" });
+
+    await expect(tts.prepare({ allowNetwork: true })).rejects.toSatisfy(
+      (error: unknown) => isTtsError(error) && error.code === TTS_ERROR_CODES.MODEL_LOAD_FAILED,
+    );
+
+    // Nothing this attempt wrote survives: one provisioning attempt is one transaction.
+    expect([...written]).toEqual([]);
+    await tts.dispose();
+  });
+
+  it("keeps files that a previous, successful provisioning created", async () => {
+    const written = new Set<string>([
+      "https://huggingface.co/onnx-community/phonon-31m-en-ONNX/resolve/4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4/config.json",
+    ]);
+    const probe: FsProbe = {
+      cached: async (urls) => urls.map((url) => ({ cached: written.has(url) })),
+      remove: async (urls) => {
+        for (const url of urls) {
+          written.delete(url);
+        }
+      },
+    };
+    const loader = createFakeLoader({ loadError: new Error("connection reset") });
+    const engine = await createOnnxEngine({
+      device: "cpu",
+      worker: false,
+      fsProbe: probe,
+      inThreadLoader: loader.load,
+    });
+    const tts = createTts({ engine, offline: "allow" });
+
+    await expect(tts.prepare({ allowNetwork: true })).rejects.toSatisfy(
+      (error: unknown) => isTtsError(error) && error.code === TTS_ERROR_CODES.MODEL_LOAD_FAILED,
+    );
+
+    // The file from the earlier run is still there: rollback only removes what it added.
+    expect(written.size).toBe(1);
+    await tts.dispose();
+  });
+
+  it("passes the declared voice digest to the loader, so a corrupt voice is caught at download", async () => {
+    const { engine, loader } = await createEngine();
+    const tts = createTts({ engine, offline: "allow", voice: "default" });
+
+    await tts.preload();
+
+    // The pinned manifest's digest of `voices/default.bin` at the pinned revision.
+    expect(loader.stats.lastVoiceSha256).toBe(
+      "d9291d795d2b3b3ca5aaf0d61c44b378918c840824e7c0bc41cfb63e5b0c560b",
+    );
+    await tts.dispose();
+  });
+
+  it("reports a re-described plan after a successful provisioning", async () => {
+    const written = new Set<string>();
+    const probe: FsProbe = {
+      cached: async (urls) => urls.map((url) => ({ cached: written.has(url) })),
+      remove: async (urls) => {
+        for (const url of urls) {
+          written.delete(url);
+        }
+      },
+    };
+    const loader = createFakeLoader();
+    const engine = await createOnnxEngine({
+      device: "cpu",
+      worker: false,
+      fsProbe: probe,
+      inThreadLoader: async (options, voice) => {
+        const loaded = await loader.load(options, voice);
+        const described = await engine.describeAssets({ language: "en", voice: "default" });
+        for (const file of described.files) {
+          if (file.url !== undefined) {
+            written.add(file.url);
+          }
+        }
+        return loaded;
+      },
+    });
+    const tts = createTts({ engine, offline: "allow", voice: "default" });
+
+    const plan = await tts.prepare({ allowNetwork: true });
+    expect(plan.complete).toBe(true);
+    expect(plan.cachedBytes).toBe(plan.totalBytes);
+    await tts.dispose();
+  });
+
+  it("estimates the cold download to the byte, per dtype", async () => {
+    // The M4 gate asks for `estimateDownload()` to match the observed byte count. The bytes here
+    // are the pinned revision's own tree, so a manifest edit that forgets a file or transposes a
+    // digit fails this test instead of surprising a user with a budget overrun.
+    const expected: Readonly<Record<string, number>> = {
+      // config + tokenizer + tokenizer_config + flow_lm + mimi_decoder + default voice
+      fp32: 4_952 + 303_009 + 144 + 120_089_751 + 41_267_821 + 256_000,
+      // the same, with the q4 flow graph split into a skeleton and one external data chunk
+      q4: 4_952 + 303_009 + 144 + 84_132 + 26_073_088 + 41_267_821 + 256_000,
+      // both graphs split, plus the two f16 external data chunks
+      q4f16: 4_952 + 303_009 + 144 + 254_451 + 19_828_736 + 54_375 + 20_608_000 + 256_000,
+    };
+
+    for (const [dtype, bytes] of Object.entries(expected)) {
+      const loader = createFakeLoader();
+      const engine = await createOnnxEngine({
+        device: "cpu",
+        dtype: dtype as "fp32" | "q4" | "q4f16",
+        worker: false,
+        fsProbe: {
+          cached: async (urls) => urls.map(() => ({ cached: false })),
+          remove: async () => undefined,
+        },
+        inThreadLoader: loader.load,
+      });
+      const tts = createTts({ engine, offline: "allow", voice: "default" });
+
+      const estimate = await tts.estimateDownload();
+      expect(`${dtype}:${estimate.bytes}`).toBe(`${dtype}:${bytes}`);
+      expect(estimate.bytes).toBe(estimate.totalBytes);
+      expect(estimate.megabytes).toBeCloseTo(bytes / 1_000_000, 6);
+      await tts.dispose();
+    }
+  });
+
   it("maps a load failure onto MODEL_LOAD_FAILED and keeps the message", async () => {
     const { engine } = await createEngine({ loadError: new Error("HTTP 500 from the Hub") });
     const tts = createTts({ engine, offline: "allow" });

@@ -66,6 +66,36 @@ describe("offline policy", () => {
     expect(engine.stats.isCached).toBeGreaterThan(0);
     expect(engine.stats.synthesize).toBe(0);
   });
+
+  it("strict: preload() cannot be used to bypass the policy", async () => {
+    const engine = createFakeEngine({ cached: false });
+    const tts = createTts({ engine, offline: "strict" });
+
+    await expect(tts.preload()).rejects.toMatchObject({
+      code: TTS_ERROR_CODES.OFFLINE_ASSETS_MISSING,
+    });
+    // The engine was never asked to load, so nothing could have been downloaded.
+    expect(engine.stats.load).toBe(0);
+    expect(tts.isReady()).toBe(false);
+  });
+
+  it("strict: preload() succeeds when everything is cached", async () => {
+    const engine = createFakeEngine({ cached: true });
+    const tts = createTts({ engine, offline: "strict" });
+
+    await tts.preload();
+    expect(tts.isReady()).toBe(true);
+    expect(engine.stats.load).toBe(1);
+  });
+
+  it("allow: preload() loads without a cache check", async () => {
+    const engine = createFakeEngine({ cached: false });
+    const tts = createTts({ engine, offline: "allow" });
+
+    await tts.preload();
+    expect(engine.stats.load).toBe(1);
+    expect(engine.stats.describeAssets).toBe(0);
+  });
 });
 
 describe("Tts.prepare()", () => {

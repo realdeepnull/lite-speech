@@ -48,7 +48,7 @@ export {
   type TtsEngine,
 } from "./engine.js";
 
-export { Tts, createTts, type PrepareAssetsOptions } from "./tts.js";
+export { Tts, createTts, type PrepareAssetsOptions, type VerifyAssetsOptions } from "./tts.js";
 
 export {
   DEFAULT_MAX_CHARS_PER_SEGMENT,
@@ -60,17 +60,21 @@ export {
 
 export {
   assertBudget,
+  assertIntegrity,
   cacheState,
   createAssetPlan,
+  createIntegrityReport,
   estimateDownload,
   missingAssets,
   type AssetFile,
+  type AssetIntegrityState,
   type AssetPlan,
   type AssetPlanFile,
   type AssetPlanInput,
   type AssetRole,
   type CacheState,
   type DownloadEstimate,
+  type IntegrityReport,
   type ModelManifest,
   type VoiceManifest,
 } from "./assets.js";

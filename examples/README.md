@@ -22,9 +22,13 @@ What it demonstrates:
 
 - `createOnnxEngine({ device: "auto" })` resolving WebGPU or WASM, and reporting which.
 - The voice list read synchronously from the engine, before anything is downloaded.
-- `estimateDownload()` and `prepare({ allowNetwork: true })` as the consent flow.
+- `describeAssets()` rendering the cache state, and `estimateDownload()` as the
+  consent figure.
+- `prepare({ allowNetwork: true, verify: true })` and `verifyAssets()` as the
+  provisioning flow, including a visible integrity state.
 - `synthesize()` and `stream()`, with the stream's time-to-first-chunk visible.
 - `AbortController` cancellation through the Stop button.
+- `removeModel()` eviction, after which strict offline correctly refuses.
 
 The server answers `404` for unknown paths on purpose: an SPA fallback would return
 `index.html` with status 200 for a missing worker script, and the worker would then

@@ -18,9 +18,41 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createOnnxEngine, type OnnxEngine } from "../src/create-onnx-engine.js";
+import { assetUrl } from "../src/models.js";
 
 /** Text long enough to produce several frames but short enough to keep the suite quick. */
 const TEXT = "Hello from lite-speech in Chromium.";
+
+/**
+ * Proves that every path the runtime can ask for is already cached *at the pin*.
+ *
+ * The URLs are the manifest's own (`assetUrl`), not ones rebuilt here: a test that repeated the
+ * concatenation could agree with itself while disagreeing with the runtime. Any `resolve/main/`
+ * entry in the cache is also reported, because a lookup that reached the moving branch is the
+ * exact defect this guards against — the tokenizer probe drops the caller's `revision`.
+ */
+async function page_cacheState(
+  modelId: string,
+  revision: string,
+  paths: readonly string[],
+): Promise<{ readonly missing: string[]; readonly unpinned: string[] }> {
+  const names = await caches.keys();
+  const opened = await Promise.all(names.map((name) => caches.open(name)));
+  const keys = (await Promise.all(opened.map((cache) => cache.keys()))).flat().map((r) => r.url);
+
+  const missing: string[] = [];
+  for (const path of paths) {
+    const url = assetUrl(modelId, revision, path);
+    const matches = await Promise.all(opened.map((cache) => cache.match(url)));
+    if (matches.every((match) => match === undefined)) {
+      missing.push(path);
+    }
+  }
+  return {
+    missing,
+    unpinned: keys.filter((url) => url.includes(`/${modelId}/resolve/main/`)),
+  };
+}
 
 let engine: OnnxEngine;
 let tts: Tts;
@@ -139,7 +171,17 @@ describe("engine in Chromium", () => {
     expect(plan.revision).toBe("4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4");
     expect(plan.licenses).toEqual(["Apache-2.0"]);
     expect(plan.sizesComplete).toBe(true);
+    expect(plan.hashesComplete).toBe(true);
+    expect(plan.integrity).toBe("declared");
+    expect(plan.sizeMismatches).toEqual([]);
     expect(plan.files.every((file) => file.cached)).toBe(true);
+    expect(plan.files.every((file) => file.url?.startsWith("https://huggingface.co/"))).toBe(true);
+    // The declared manifest sizes are the numbers a consent dialog shows, so they must be the
+    // bytes the browser actually stored — this is the "estimate matches the observation" gate.
+    for (const file of plan.files) {
+      expect(`${file.path}:${file.cachedSize}`).toBe(`${file.path}:${file.size}`);
+    }
+    expect(plan.cachedBytes).toBe(plan.totalBytes);
     // `q4` is the resolved dtype, so only its two graphs are reported.
     const graphs = plan.files
       .filter((file) => file.path.startsWith("onnx/"))
@@ -147,6 +189,70 @@ describe("engine in Chromium", () => {
     expect(graphs).toContain("onnx/flow_lm_q4.onnx");
     expect(graphs).toContain("onnx/mimi_decoder_q4.onnx");
     expect(graphs).not.toContain("onnx/flow_lm.onnx");
+  }, 900_000);
+
+  it("verifies every cached digest against the manifest", async () => {
+    // The real Cache Storage path: the bytes that were downloaded are hashed again. This is the
+    // browser half of the M4 integrity gate — a hash computed by `crypto.subtle` over a response
+    // read back from Cache Storage, not a fake.
+    const report = await tts.verifyAssets();
+    expect(report.ok).toBe(true);
+    expect(report.mismatched).toEqual([]);
+    expect(report.unreadable).toEqual([]);
+    expect(report.unverified).toEqual([]);
+
+    const plan = await tts.describeAssets();
+    expect([...report.verified].sort()).toEqual(plan.files.map((file) => file.path).sort());
+  }, 900_000);
+
+  it("synthesizes and verifies from Cache Storage alone, once provisioned", async () => {
+    // The M4 gate end to end in a real browser. A page-level `fetch` override cannot prove "zero
+    // requests" here — inference runs in a worker with its own global scope, and Playwright's
+    // routing is not reachable from inside the browser test — so the request-level assertion lives
+    // in `tests/revision-pinning.test.ts`, which drives Transformers.js' real resolution code and
+    // records what it asks for. What this test proves is the browser half: a provisioned cache
+    // answers every path the manifest names, a strict instance synthesizes from it, and
+    // verification reads it back — none of which needs a network round trip.
+    const provisioned = await createOnnxEngine({ device: "wasm", dtype: "q4" });
+    const warm = createTts({ engine: provisioned, offline: "allow", voice: "default" });
+    await warm.prepare({ allowNetwork: true, verify: true });
+
+    const plan = await warm.describeAssets();
+    expect(plan.complete).toBe(true);
+
+    const state = await page_cacheState(plan.modelId, plan.revision, [
+      ...plan.files.map((file) => file.path),
+      // The one path Transformers.js asks for without a revision. It must be cached under the
+      // pinned URL, which is what makes the probe a cache hit rather than a request.
+      "tokenizer_config.json",
+    ]);
+    expect(state.missing).toEqual([]);
+    // Nothing in the cache may point at a moving branch: a pinned profile that resolved `main`
+    // even once would be unverifiable, and `removeModel()` would leave those entries behind.
+    expect(state.unpinned).toEqual([]);
+
+    // And the strict instance synthesizes from exactly those bytes.
+    const strict = createTts({
+      engine: await createOnnxEngine({ device: "wasm", dtype: "q4" }),
+      offline: "strict",
+      voice: "default",
+    });
+    const result = await strict.synthesize(TEXT);
+    expect(result.pcm.length).toBeGreaterThan(24_000);
+
+    const chunks: AudioChunk[] = [];
+    for await (const chunk of strict.stream(TEXT)) {
+      chunks.push(chunk);
+    }
+    expect(chunks.at(-1)?.final).toBe(true);
+
+    // Verification reads Cache Storage, not the network, so a provisioned profile can prove itself
+    // without a single request — the same code path a diagnostics screen would use.
+    const report = await strict.verifyAssets();
+    expect(report.ok).toBe(true);
+
+    await strict.dispose();
+    await warm.dispose();
   }, 900_000);
 
   it("throws for an explicit webgpu request only when there is no adapter", async () => {

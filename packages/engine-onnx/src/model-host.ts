@@ -29,6 +29,7 @@ export type PhononLoader = (
     readonly revision: string;
     readonly device: string;
     readonly dtype: string;
+    readonly voiceSha256?: string | undefined;
     readonly onProgress: (event: ProgressEvent) => void;
   },
   voice: string,
@@ -155,6 +156,7 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
           revision: request.revision,
           device: request.device,
           dtype: request.dtype,
+          ...(request.voiceSha256 !== undefined && { voiceSha256: request.voiceSha256 }),
           onProgress: (event) => {
             post({ kind: "progress", id: request.id, event });
           },

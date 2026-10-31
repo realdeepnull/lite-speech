@@ -32,6 +32,8 @@ export interface LoadRequest {
   readonly profile?: string;
   /** Voice to preload; per-request `voice` can switch it later. */
   readonly voice?: string;
+  /** Expected SHA-256 of the voice file, when the manifest declares one. */
+  readonly voiceSha256?: string;
 }
 
 /** `synthesize`: one full utterance in a single response. */
