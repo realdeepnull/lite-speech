@@ -21,8 +21,17 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "size": "size-limit"
   },
+  "size-limit": [
+    {
+      "name": "core",
+      "path": "dist/index.js",
+      "limit": "7 kB",
+      "gzip": true
+    }
+  ],
   "keywords": [
     "tts",
     "text-to-speech",

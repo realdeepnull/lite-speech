@@ -22,8 +22,8 @@ npm install @lite-speech/core @lite-speech/engine-onnx
 
 ## Quick start
 
-The public API (`createTts`, `synthesize`, `stream`, `dispose`) is implemented in
-milestone M2; the first runnable quick start lands with the M6 beta.
+`@lite-speech/core` (M2) is implemented; the engine (`createOnnxEngine`, M3) is
+next, so a runnable end-to-end quick start lands with the M6 beta.
 
 ## Status
 
@@ -33,8 +33,8 @@ Pre-release. Milestones are tracked in the [roadmap](docs/ROADMAP.md):
 | --------- | --------------------- | ------- |
 | M0        | Foundation            | done    |
 | M1        | Inference spike       | done    |
-| M2        | Core MVP              | next    |
-| M3        | ONNX engine MVP       | planned |
+| M2        | Core MVP              | done    |
+| M3        | ONNX engine MVP       | next    |
 | M4        | Assets & provisioning | planned |
 | M5        | Measurement           | planned |
 | M6        | Beta `0.1.0`          | planned |

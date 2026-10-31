@@ -1,7 +1,7 @@
 # Roadmap of `lite-speech`
 
-> **Status:** M0 (repository and toolchain foundation) and M1 (inference spike)
-> implemented; M2 is next.
+> **Status:** M0 (repository and toolchain foundation), M1 (inference spike), and
+> M2 (`@lite-speech/core` MVP) implemented; M3 is next.
 > Milestones below keep their checklist state.
 > **Date:** October 31, 2026
 > **Target:** First public release `0.1.0` of `@lite-speech/core` and
@@ -158,27 +158,27 @@ promises, provable with a fake engine in Node only.
 
 **Deliverables**
 
-- [ ] `tts.ts` — `createTts()` (synchronous), lazy `preload()` with
+- [x] `tts.ts` — `createTts()` (synchronous), lazy `preload()` with
       single-flight and un-memoized failures, `synthesize()`, `stream()`,
       `dispose()` (idempotent), disposed/abort re-checks after every `await`.
-- [ ] `engine.ts` — `TtsEngine` contract with synchronous `supports()` and
+- [x] `engine.ts` — `TtsEngine` contract with synchronous `supports()` and
       `voices()`, optional `capabilities()`, `prepare()`, `describeAssets()`,
       `removeModel()`.
-- [ ] `types.ts` — `AudioResult`, `AudioChunk`, `VoiceInfo`, `ProgressEvent`,
+- [x] `types.ts` — `AudioResult`, `AudioChunk`, `VoiceInfo`, `ProgressEvent`,
       `DebugEvent`, `TtsCapabilities` as pure data contracts.
-- [ ] `stream.ts` — bounded `AsyncIterable<AudioChunk>` with backpressure,
+- [x] `stream.ts` — bounded `AsyncIterable<AudioChunk>` with backpressure,
       monotonic `sequence`, and exactly one `final` chunk.
-- [ ] `prepare.ts` — deterministic `prepareText()` / `segmentText()` with
+- [x] `prepare.ts` — deterministic `prepareText()` / `segmentText()` with
       `maxCharsPerSegment`, no silent truncation.
-- [ ] `assets.ts` — `ModelManifest`, `VoiceManifest`, `estimateDownload()`,
+- [x] `assets.ts` — `ModelManifest`, `VoiceManifest`, `estimateDownload()`,
       `assertBudget()`, cache-state helpers.
-- [ ] `errors.ts` — stable `TTS_ERROR_CODES` with `cause` chaining; every error
+- [x] `errors.ts` — stable `TTS_ERROR_CODES` with `cause` chaining; every error
       normalized once at the public boundary.
-- [ ] `emitter.ts` — typed emitter with no DOM dependency (Node tests).
-- [ ] `wav.ts` — tree-shakeable `encodeWav()` above the inference contract.
-- [ ] `pool.ts` — `TtsPool` with single-flight creation and LRU eviction.
-- [ ] `index.ts` — the only entry point; every export intentional.
-- [ ] Tests with a fake engine: lifecycle, offline policy, budget rejection,
+- [x] `emitter.ts` — typed emitter with no DOM dependency (Node tests).
+- [x] `wav.ts` — tree-shakeable `encodeWav()` above the inference contract.
+- [x] `pool.ts` — `TtsPool` with single-flight creation and LRU eviction.
+- [x] `index.ts` — the only entry point; every export intentional.
+- [x] Tests with a fake engine: lifecycle, offline policy, budget rejection,
       segmentation, backpressure, abort semantics, pool races, error
       normalization, WAV output.
 
@@ -187,12 +187,14 @@ promises, provable with a fake engine in Node only.
 
 **Exit gate**
 
-- Core unit suite green on Node LTS with no DOM shims.
-- `packages/core/package.json` has **zero** runtime and peer dependencies.
-- `size-limit` passes a documented budget (provisional: core ≤ 6 kB min+gzip,
-  revised after the first real build is measured).
-- The public surface contains no Transformers.js, ONNX, worker, or
-  audio-playback types.
+- [x] Core unit suite green on Node LTS with no DOM shims (106 tests, `node`
+      environment).
+- [x] `packages/core/package.json` has **zero** runtime and peer dependencies.
+- [x] `size-limit` passes a documented budget.
+      _Measured: 6.35 kB minified+gzipped; budget set to 7 kB (the roadmap's
+      provisional 6 kB was revised after the first real build, as planned)._
+- [x] The public surface contains no Transformers.js, ONNX, worker, or
+      audio-playback types.
 
 ---
 

@@ -124,19 +124,19 @@ meta package could register an engine on import.
 
 ### 3.1 Module map
 
-| Module       | Public surface                                                                                           | Role                                                                                              |
-| ------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `tts.ts`     | `createTts`, `Tts`                                                                                       | Owns one engine, one offline policy, and the lifecycle; orchestration, state, error normalization |
-| `engine.ts`  | `TtsEngine`, `registerDefaultEngine`, `getDefaultEngines`                                                | Engine SPI and default-engine registry                                                            |
-| `types.ts`   | All DTOs (`AudioResult`, `AudioChunk`, `VoiceInfo`, `ProgressEvent`, `DebugEvent`, `TtsCapabilities`, …) | Pure data contracts, no behaviour                                                                 |
-| `prepare.ts` | `prepareText`, `segmentText`                                                                             | Whitespace/text normalization and sentence segmentation                                           |
-| `stream.ts`  | `createAudioStream`, `AudioStreamOptions`                                                                | Bounded-queue `AsyncIterable<AudioChunk>` with backpressure                                       |
-| `assets.ts`  | `AssetPlan`, `ModelManifest`, `VoiceManifest`, `estimateDownload`, `assertBudget`                        | Asset/offline policy, budget checks, cache-state helpers                                          |
-| `pool.ts`    | `TtsPool`                                                                                                | Multi-voice/multi-language instance cache, single-flight creation, LRU eviction                   |
-| `wav.ts`     | `encodeWav`                                                                                              | Optional PCM → WAV encoder, layered **above** the inference contract                              |
-| `emitter.ts` | `createEmitter`, `Emitter`, `ListenerMap`                                                                | Typed event emitter (no `EventTarget`, so Node tests work)                                        |
-| `errors.ts`  | `TTS_ERROR_CODES`, `TtsError`, `isTtsError`, `formatTtsError`                                            | Stable error taxonomy                                                                             |
-| `index.ts`   | Re-exports                                                                                               | The only public entry point                                                                       |
+| Module       | Public surface                                                                                                                      | Role                                                                                              |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `tts.ts`     | `createTts`, `Tts`, `PrepareAssetsOptions`                                                                                          | Owns one engine, one offline policy, and the lifecycle; orchestration, state, error normalization |
+| `engine.ts`  | `TtsEngine`, `registerDefaultEngine`, `getDefaultEngines`, `clearDefaultEngines`, `assertTtsEngine`, `isTtsEngine`                  | Engine SPI and default-engine registry                                                            |
+| `types.ts`   | All DTOs (`AudioResult`, `AudioChunk`, `VoiceInfo`, `ProgressEvent`, `DebugEvent`, `TtsCapabilities`, …)                            | Pure data contracts, no behaviour                                                                 |
+| `prepare.ts` | `prepareText`, `segmentText`, `DEFAULT_MAX_CHARS_PER_SEGMENT`                                                                       | Whitespace/text normalization and sentence segmentation                                           |
+| `stream.ts`  | `createAudioStream`, `AudioStreamOptions`                                                                                           | Bounded-queue `AsyncIterable<AudioChunk>` with backpressure and contract checks                   |
+| `assets.ts`  | `AssetPlan`, `ModelManifest`, `VoiceManifest`, `createAssetPlan`, `estimateDownload`, `assertBudget`, `missingAssets`, `cacheState` | Asset/offline policy, budget checks, cache-state helpers                                          |
+| `pool.ts`    | `TtsPool`, `ttsPoolKey`                                                                                                             | Multi-voice/multi-language instance cache, single-flight creation, LRU eviction                   |
+| `wav.ts`     | `encodeWav`                                                                                                                         | Optional PCM → WAV encoder, layered **above** the inference contract                              |
+| `emitter.ts` | `createEmitter`, `Emitter`, `ListenerMap`                                                                                           | Typed event emitter (no `EventTarget`, so Node tests work)                                        |
+| `errors.ts`  | `TTS_ERROR_CODES`, `TtsError`, `isTtsError`, `isAbortError`, `normalizeTtsError`, `formatTtsError`                                  | Stable error taxonomy                                                                             |
+| `index.ts`   | Re-exports                                                                                                                          | The only public entry point                                                                       |
 
 Every public export is listed in `packages/core/src/index.ts`; `knip` enforces
 that no source file or export is orphaned — same policy as
@@ -180,12 +180,20 @@ Key invariants carried over from
   instance; the next call retries.
 - **Every operation re-checks `disposed` and `signal.aborted` after every
   `await`**, because disposal or an abort can happen while the model loads.
+- **Every operation re-checks `disposed` and `signal.aborted` after every
+  `await`**, because disposal or an abort can happen while the model loads.
 - **Errors are normalized at the boundary.** Only `TtsError` passes through
-  unchanged; anything else becomes `TtsError(SYNTHESIS_FAILED, …, { cause })`.
+  unchanged; anything else becomes a `TtsError` with a stable code and the
+  original error as `cause`.
 - **`dispose()` is idempotent**, aborts active streams, and disposes the engine.
 - **`offline: "strict"` is enforced in core**, not trusted to the engine: a
   synthesis call that requires a download rejects with
-  `OFFLINE_ASSETS_MISSING` before the engine is invoked.
+  `OFFLINE_ASSETS_MISSING` before the engine is invoked. Core prefers
+  `describeAssets()` (it can name the missing files) and falls back to the
+  required `isCached()`.
+- **Whitespace-only input short-circuits**: `synthesize()` resolves an empty
+  result and `stream()` yields one empty `final` chunk, both without loading the
+  model.
 - **No implicit resampling, no implicit playback.** Core never touches
   `AudioContext`, so the library stays usable in Node and in workers.
 
