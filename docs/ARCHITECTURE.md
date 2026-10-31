@@ -786,6 +786,8 @@ Open questions to close before beta:
 
 - [lite-speech-concept.md](./lite-speech-concept.md) — product vision, model
   candidates, licensing, and MVP scope.
+- [ROADMAP.md](./ROADMAP.md) — milestone plan, sequencing, tooling adoption,
+  and release gates.
 - [AGENTS.md](../AGENTS.md) — repository layout and the mandatory validation
   sequence.
 - `lite-translator` reference sources: `packages/core/src/engine.ts`,
