@@ -162,6 +162,8 @@ export type DebugEvent =
       readonly engine: string;
       readonly from: string;
       readonly to: string;
+      /** Why the fallback happened, when the engine can name a reason. */
+      readonly reason?: string;
     }
   | { readonly type: "worker-spawn"; readonly timestamp: number; readonly engine: string }
   | {

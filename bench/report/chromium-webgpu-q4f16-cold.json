@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31T23:40:58.319Z",
+  "runtime": "chromium",
+  "phase": "cold",
+  "status": "ok",
+  "environment": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+    "os": "Win32",
+    "cores": 24,
+    "gpu": "amd rdna-3",
+    "device": "webgpu",
+    "dtype": "q4f16"
+  },
+  "model": {
+    "id": "onnx-community/phonon-31m-en-ONNX",
+    "revision": "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4",
+    "streaming": "incremental-frames",
+    "sampleRate": 24000
+  },
+  "text": {
+    "id": "bench-standard-v1",
+    "characters": 126,
+    "audioSeconds": 7.2
+  },
+  "download": {
+    "bytes": 41309667,
+    "files": 8,
+    "megabytes": 41.3,
+    "licenses": ["Apache-2.0"]
+  },
+  "coldStartMs": 5855.64,
+  "runs": [
+    {
+      "loadMs": 5855.64,
+      "ttfaMs": 617.51,
+      "streamMs": 3037.37,
+      "audioSeconds": 7.52,
+      "rtf": 0.404,
+      "chunks": 95,
+      "first": true
+    },
+    {
+      "loadMs": 0,
+      "ttfaMs": 37.84,
+      "streamMs": 2282.15,
+      "audioSeconds": 7.2,
+      "rtf": 0.317,
+      "chunks": 91,
+      "first": false
+    },
+    {
+      "loadMs": 0.01,
+      "ttfaMs": 33.44,
+      "streamMs": 2141.25,
+      "audioSeconds": 7.12,
+      "rtf": 0.301,
+      "chunks": 90,
+      "first": false
+    },
+    {
+      "loadMs": 0,
+      "ttfaMs": 28.75,
+      "streamMs": 2180.94,
+      "audioSeconds": 7.2,
+      "rtf": 0.303,
+      "chunks": 91,
+      "first": false
+    },
+    {
+      "loadMs": 0,
+      "ttfaMs": 32.22,
+      "streamMs": 2401,
+      "audioSeconds": 7.36,
+      "rtf": 0.326,
+      "chunks": 93,
+      "first": false
+    }
+  ],
+  "summary": {
+    "loadMs": {
+      "n": 1,
+      "min": 5855.64,
+      "p50": 5855.64,
+      "p95": 5855.64,
+      "max": 5855.64,
+      "mean": 5855.64
+    },
+    "ttfaMs": {
+      "n": 5,
+      "min": 28.75,
+      "p50": 33.44,
+      "p95": 617.51,
+      "max": 617.51,
+      "mean": 149.95
+    },
+    "rtf": {
+      "n": 5,
+      "min": 0.301,
+      "p50": 0.317,
+      "p95": 0.404,
+      "max": 0.404,
+      "mean": 0.33
+    },
+    "streamMs": {
+      "n": 5,
+      "min": 2141.25,
+      "p50": 2282.15,
+      "p95": 3037.37,
+      "max": 3037.37,
+      "mean": 2408.54
+    }
+  },
+  "cancellationMs": {
+    "n": 3,
+    "min": 0.15,
+    "p50": 0.2,
+    "p95": 0.54,
+    "max": 0.54,
+    "mean": 0.3
+  },
+  "notes": [
+    "Cold phase: Cache Storage was cleared before the run, so the first stream downloaded the profile.",
+    "Memory is not reported: a Chromium renderer's heap has no comparable per-model figure, and `performance.memory` is not standardized.",
+    "The device is the one the page resolved; a successful WebGPU load is not by itself proof that the operators ran on the GPU (M1 §5.1)."
+  ]
+}

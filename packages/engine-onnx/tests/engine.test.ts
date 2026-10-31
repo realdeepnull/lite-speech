@@ -5,7 +5,13 @@
  * engine's internals: they build a `Tts` with an in-thread engine, then assert on the contract
  * the core enforces — ordering, `final` semantics, aborts, offline policy, and disposal.
  */
-import { createTts, TTS_ERROR_CODES, isTtsError, type AudioChunk } from "@lite-speech/core";
+import {
+  createTts,
+  TTS_ERROR_CODES,
+  isTtsError,
+  type AudioChunk,
+  type DebugEvent,
+} from "@lite-speech/core";
 import { describe, expect, it } from "vitest";
 
 import { createOnnxEngine, type OnnxEngineOptions } from "../src/create-onnx-engine.js";
@@ -63,6 +69,52 @@ describe("engine through createTts()", () => {
       dtype: "fp32",
       streaming: "incremental-frames",
     });
+    await tts.dispose();
+  });
+
+  it("emits device-fallback before device-resolved when a policy fell back", async () => {
+    // `auto` under Node: no `navigator.gpu`, so the policy wants WebGPU and the runtime uses CPU.
+    // That is the real fallback the event exists for, not a hand-set field.
+    const { engine } = await createEngine({}, { device: "auto" });
+    expect(engine.resolved).toMatchObject({ device: "cpu", fallbackFrom: "webgpu" });
+
+    const events: DebugEvent[] = [];
+    const tts = createTts({
+      engine,
+      offline: "allow",
+      onDebug: (event) => events.push(event),
+    });
+
+    await tts.preload();
+
+    expect(events.find((event) => event.type === "device-fallback")).toEqual(
+      expect.objectContaining({
+        engine: "onnx",
+        from: "webgpu",
+        to: "cpu",
+        reason: "no WebGPU adapter",
+      }),
+    );
+    // Order matters: "wanted webgpu, used cpu" has to precede the device that actually ran.
+    expect(events.findIndex((event) => event.type === "device-fallback")).toBeLessThan(
+      events.findIndex((event) => event.type === "device-resolved"),
+    );
+    await tts.dispose();
+  });
+
+  it("emits no device-fallback when the requested device was used", async () => {
+    const { engine } = await createEngine();
+    const events: DebugEvent[] = [];
+    const tts = createTts({
+      engine,
+      offline: "allow",
+      onDebug: (event) => events.push(event),
+    });
+
+    await tts.preload();
+
+    expect(events.map((event) => event.type)).toContain("device-resolved");
+    expect(events.map((event) => event.type)).not.toContain("device-fallback");
     await tts.dispose();
   });
 

@@ -2,5 +2,21 @@
   "name": "@lite-speech/bench-benchmark",
   "version": "0.0.0",
   "private": true,
-  "description": "Performance harness: cold start, time-to-first-audio, real-time factor, peak RAM (M5)."
+  "description": "Performance harness: cold start, time-to-first-audio, real-time factor, peak RAM (M5).",
+  "type": "module",
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "bench:node": "node dist/node.mjs",
+    "bench:browser": "node dist/drive.mjs",
+    "report": "node dist/render.mjs"
+  },
+  "devDependencies": {
+    "@lite-speech/core": "0.0.0",
+    "@lite-speech/engine-onnx": "0.0.0",
+    "playwright": "^1.64.1",
+    "tsdown": "^0.23.4",
+    "vitest": "^5.0.5"
+  }
 }

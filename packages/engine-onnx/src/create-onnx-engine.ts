@@ -59,6 +59,11 @@ export interface OnnxEngineOptions {
    * {@link OnnxEngineOptions.inThreadLoader}.
    */
   readonly worker?: (() => Worker) | false;
+  /**
+   * Sampling temperature. Defaults to the model's own `phonon.temperature`; `0` makes generation
+   * deterministic, which is what a quality comparison between dtypes needs.
+   */
+  readonly temperature?: number;
   /** Loader for the in-thread path; required when `worker` is `false` or `Worker` is missing. */
   readonly inThreadLoader?: InThreadLoader;
   /** Filesystem cache probe for Node.js, where Cache Storage does not exist. */
@@ -133,6 +138,9 @@ export async function createOnnxEngine(options: OnnxEngineOptions = {}): Promise
     registry,
     device: resolved.device,
     dtype: resolved.dtype,
+    ...(resolved.fallbackFrom !== undefined && { fallbackFrom: resolved.fallbackFrom }),
+    ...(resolved.reason !== undefined && { fallbackReason: resolved.reason }),
+    ...(options.temperature !== undefined && { temperature: options.temperature }),
     ...(createWorker !== undefined && { createWorker }),
     ...(options.inThreadLoader !== undefined && { inThreadLoader: options.inThreadLoader }),
     ...(options.fsProbe !== undefined && { fsProbe: options.fsProbe }),

@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31T23:19:45.232Z",
+  "runtime": "node",
+  "phase": "cold",
+  "status": "ok",
+  "environment": {
+    "node": "v24.18.0",
+    "os": "win32 x64",
+    "arch": "x64",
+    "cores": 24,
+    "cpu": "AMD RYZEN AI MAX PRO 390 w/ Radeon 8050S",
+    "device": "cpu",
+    "dtype": "fp32"
+  },
+  "model": {
+    "id": "onnx-community/phonon-31m-en-ONNX",
+    "revision": "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4",
+    "streaming": "incremental-frames",
+    "sampleRate": 24000
+  },
+  "text": {
+    "id": "bench-standard-v1",
+    "characters": 126,
+    "audioSeconds": 7.28
+  },
+  "download": {
+    "bytes": 161921677,
+    "files": 6,
+    "megabytes": 161.9,
+    "licenses": ["Apache-2.0"]
+  },
+  "coldStartMs": 8196.01,
+  "runs": [
+    {
+      "loadMs": 8196.01,
+      "ttfaMs": 57.93,
+      "streamMs": 1945.99,
+      "audioSeconds": 7.28,
+      "rtf": 0.267,
+      "chunks": 92,
+      "peakRssBytes": 401268736,
+      "first": true
+    },
+    {
+      "loadMs": 0.02,
+      "ttfaMs": 39.47,
+      "streamMs": 1860.34,
+      "audioSeconds": 7.2,
+      "rtf": 0.258,
+      "chunks": 91,
+      "peakRssBytes": 398053376,
+      "first": false
+    },
+    {
+      "loadMs": 0.02,
+      "ttfaMs": 44.86,
+      "streamMs": 2043.27,
+      "audioSeconds": 7.44,
+      "rtf": 0.275,
+      "chunks": 94,
+      "peakRssBytes": 396914688,
+      "first": false
+    },
+    {
+      "loadMs": 0.02,
+      "ttfaMs": 43.8,
+      "streamMs": 1826.15,
+      "audioSeconds": 7.36,
+      "rtf": 0.248,
+      "chunks": 93,
+      "peakRssBytes": 398372864,
+      "first": false
+    },
+    {
+      "loadMs": 0.02,
+      "ttfaMs": 39.66,
+      "streamMs": 1658.96,
+      "audioSeconds": 7.28,
+      "rtf": 0.228,
+      "chunks": 92,
+      "peakRssBytes": 403562496,
+      "first": false
+    }
+  ],
+  "summary": {
+    "loadMs": {
+      "n": 1,
+      "min": 8196.01,
+      "p50": 8196.01,
+      "p95": 8196.01,
+      "max": 8196.01,
+      "mean": 8196.01
+    },
+    "ttfaMs": {
+      "n": 5,
+      "min": 39.47,
+      "p50": 43.8,
+      "p95": 57.93,
+      "max": 57.93,
+      "mean": 45.14
+    },
+    "rtf": {
+      "n": 5,
+      "min": 0.228,
+      "p50": 0.258,
+      "p95": 0.275,
+      "max": 0.275,
+      "mean": 0.255
+    },
+    "streamMs": {
+      "n": 5,
+      "min": 1658.96,
+      "p50": 1860.34,
+      "p95": 2043.27,
+      "max": 2043.27,
+      "mean": 1866.94
+    },
+    "peakRssBytes": {
+      "n": 5,
+      "min": 396914688,
+      "p50": 398372864,
+      "p95": 403562496,
+      "max": 403562496,
+      "mean": 399634432
+    }
+  },
+  "cancellationMs": {
+    "n": 3,
+    "min": 0.42,
+    "p50": 0.47,
+    "p95": 0.93,
+    "max": 0.93,
+    "mean": 0.61
+  },
+  "notes": [
+    "Cold phase: the cache directory was deleted before the run, so the first stream downloaded the profile.",
+    "Peak memory is the Node.js process resident set, not a browser tab budget or a per-model figure.",
+    "Voice embeddings are read over the network on every Node.js process start: the engine caches them in Cache Storage, which Node does not have, so `download` cannot include them."
+  ]
+}

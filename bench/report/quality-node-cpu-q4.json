@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31T23:37:41.887Z",
+  "runtime": "node",
+  "device": "cpu",
+  "dtype": "q4",
+  "temperature": 0,
+  "model": {
+    "id": "onnx-community/phonon-31m-en-ONNX",
+    "revision": "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4"
+  },
+  "cases": [
+    {
+      "id": "short-declarative",
+      "probes": "Shortest supported input: one clause, one sentence terminator.",
+      "expectation": "supported",
+      "characters": 17,
+      "full": {
+        "seconds": 1.68,
+        "peak": 0.3575,
+        "rms": 0.042,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 21,
+        "frameSamples": [1920],
+        "seconds": 1.68,
+        "samplesRatio": 1,
+        "stepRatio": 1080.08,
+        "fullStepRatio": 1080.08
+      },
+      "versusReference": {
+        "snrDb": -2.42,
+        "correlation": 0.126,
+        "maxDiff": 0.4337,
+        "lengthDelta": 0
+      }
+    },
+    {
+      "id": "short-question",
+      "probes": "Question intonation and the `?` terminator.",
+      "expectation": "supported",
+      "characters": 19,
+      "full": {
+        "seconds": 1.84,
+        "peak": 0.3112,
+        "rms": 0.05164,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 23,
+        "frameSamples": [1920],
+        "seconds": 1.84,
+        "samplesRatio": 1,
+        "stepRatio": 473.14,
+        "fullStepRatio": 473.14
+      },
+      "versusReference": {
+        "snrDb": -1.63,
+        "correlation": -0.033,
+        "maxDiff": 0.5399,
+        "lengthDelta": 0
+      }
+    },
+    {
+      "id": "medium-two-sentences",
+      "probes": "Two sentences in one call: the seam between them is where a per-segment model can clip.",
+      "expectation": "supported",
+      "characters": 55,
+      "full": {
+        "seconds": 4.08,
+        "peak": 0.4318,
+        "rms": 0.04876,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 51,
+        "frameSamples": [1920],
+        "seconds": 4.08,
+        "samplesRatio": 1,
+        "stepRatio": 143.35,
+        "fullStepRatio": 143.35
+      },
+      "versusReference": {
+        "snrDb": -1.51,
+        "correlation": 0.16,
+        "maxDiff": 0.52083,
+        "lengthDelta": 1920
+      }
+    },
+    {
+      "id": "long-paragraph",
+      "probes": "The sentence the benchmark input is based on: long enough to cross any segment budget and to expose drift over several seconds.",
+      "expectation": "supported",
+      "characters": 271,
+      "full": {
+        "seconds": 14.48,
+        "peak": 0.4187,
+        "rms": 0.05868,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 181,
+        "frameSamples": [1920],
+        "seconds": 14.48,
+        "samplesRatio": 1,
+        "stepRatio": 73.53,
+        "fullStepRatio": 73.53
+      },
+      "versusReference": {
+        "snrDb": -2.44,
+        "correlation": 0.021,
+        "maxDiff": 0.6623,
+        "lengthDelta": 7680
+      }
+    },
+    {
+      "id": "digits",
+      "probes": "Numbers and a clock time. The profile has no number expansion (M1 §9.1), and a colon is outside the vocabulary — so this is expected to be read as bytes, not as `four` and `ten forty-five`.",
+      "expectation": "known-limitation",
+      "characters": 42,
+      "full": {
+        "seconds": 3.52,
+        "peak": 0.3546,
+        "rms": 0.04562,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 44,
+        "frameSamples": [1920],
+        "seconds": 3.52,
+        "samplesRatio": 1,
+        "stepRatio": 115.2,
+        "fullStepRatio": 115.2
+      },
+      "versusReference": {
+        "snrDb": -2.37,
+        "correlation": -0.073,
+        "maxDiff": 0.65146,
+        "lengthDelta": 1920
+      }
+    },
+    {
+      "id": "currency",
+      "probes": "Currency. `€` is outside the 4 000-token vocabulary, so it degrades to `<unk>` without byte fallback (M1 §8).",
+      "expectation": "known-limitation",
+      "characters": 17,
+      "full": {
+        "seconds": 2.16,
+        "peak": 0.4271,
+        "rms": 0.03355,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 27,
+        "frameSamples": [1920],
+        "seconds": 2.16,
+        "samplesRatio": 1,
+        "stepRatio": 578.76,
+        "fullStepRatio": 578.76
+      },
+      "versusReference": {
+        "snrDb": -2.91,
+        "correlation": -0.108,
+        "maxDiff": 0.5092,
+        "lengthDelta": 0
+      }
+    },
+    {
+      "id": "proper-nouns",
+      "probes": "Unseen proper nouns, an abbreviation with a period, and non-ASCII letters (`í`). Pronounces what the vocabulary can encode.",
+      "expectation": "supported",
+      "characters": 42,
+      "full": {
+        "seconds": 3.36,
+        "peak": 0.3877,
+        "rms": 0.0493,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 42,
+        "frameSamples": [1920],
+        "seconds": 3.36,
+        "samplesRatio": 1,
+        "stepRatio": 74.75,
+        "fullStepRatio": 74.75
+      },
+      "versusReference": {
+        "snrDb": -2.5,
+        "correlation": -0.003,
+        "maxDiff": 0.54592,
+        "lengthDelta": 5760
+      }
+    },
+    {
+      "id": "punctuation",
+      "probes": "Em dashes, an exclamation-question pair, and an ellipsis: whether punctuation changes prosody or is dropped.",
+      "expectation": "known-limitation",
+      "characters": 37,
+      "full": {
+        "seconds": 3.92,
+        "peak": 0.2001,
+        "rms": 0.03166,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 49,
+        "frameSamples": [1920],
+        "seconds": 3.92,
+        "samplesRatio": 1,
+        "stepRatio": 8324.59,
+        "fullStepRatio": 8324.59
+      },
+      "versusReference": {
+        "snrDb": -1.98,
+        "correlation": -0.015,
+        "maxDiff": 0.4922,
+        "lengthDelta": 19200
+      }
+    },
+    {
+      "id": "long-unpunctuated",
+      "probes": "No terminators at all: the segmenter cannot split it, so the model receives one long segment and has to invent the phrasing.",
+      "expectation": "known-limitation",
+      "characters": 240,
+      "full": {
+        "seconds": 13.76,
+        "peak": 0.395,
+        "rms": 0.04817,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 172,
+        "frameSamples": [1920],
+        "seconds": 13.76,
+        "samplesRatio": 1,
+        "stepRatio": 47.38,
+        "fullStepRatio": 47.38
+      },
+      "versusReference": {
+        "snrDb": -2.06,
+        "correlation": 0.012,
+        "maxDiff": 0.51591,
+        "lengthDelta": 21120
+      }
+    }
+  ],
+  "determinism": {
+    "caseId": "short-declarative",
+    "identical": true,
+    "maxDiff": 0
+  },
+  "listening": {
+    "score": "pending",
+    "protocol": "Blind A/B/C over the three dtypes per corpus case, 1–5 naturalness, at least three raters, median reported. The WAV files this sweep writes are the stimulus set.",
+    "raters": 0
+  },
+  "notes": [
+    "Temperature 0: `versusReference` compares sample by sample against the fp32 run.",
+    "`stream.samplesRatio` is the concatenated stream length over the full-utterance length from the same configuration, so it isolates the stream path from model variance.",
+    "Audio files are written under bench/report/audio/ and are git-ignored; the JSON report is the evidence.",
+    "The listening score stays \"pending\" until a human runs the protocol in listening.md.",
+    "`versusReference` compares each case with the fp32 run of the same process at temperature 0."
+  ]
+}

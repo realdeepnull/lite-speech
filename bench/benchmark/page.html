@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>lite-speech benchmark</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "@lite-speech/core": "../../packages/core/dist/index.js",
+          "@lite-speech/engine-onnx": "../../packages/engine-onnx/dist/index.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <p>
+      Benchmark page. It is driven by <code>src/drive.ts</code>, which calls <code>run()</code> and
+      reads the report; opening it directly does nothing.
+    </p>
+    <script type="module">
+      // Exposed on `window` for the Playwright driver. The page deliberately renders no results:
+      // a benchmark that also has a UI has two sources of truth for the same number.
+      import { run } from "./dist/browser.js";
+
+      window.benchRun = run;
+    </script>
+  </body>
+</html>

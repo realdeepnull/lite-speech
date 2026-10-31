@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31T23:37:20.478Z",
+  "runtime": "node",
+  "device": "cpu",
+  "dtype": "fp32",
+  "temperature": 0,
+  "model": {
+    "id": "onnx-community/phonon-31m-en-ONNX",
+    "revision": "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4"
+  },
+  "cases": [
+    {
+      "id": "short-declarative",
+      "probes": "Shortest supported input: one clause, one sentence terminator.",
+      "expectation": "supported",
+      "characters": 17,
+      "full": {
+        "seconds": 1.68,
+        "peak": 0.3764,
+        "rms": 0.0421,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 21,
+        "frameSamples": [1920],
+        "seconds": 1.68,
+        "samplesRatio": 1,
+        "stepRatio": 661.86,
+        "fullStepRatio": 661.86
+      }
+    },
+    {
+      "id": "short-question",
+      "probes": "Question intonation and the `?` terminator.",
+      "expectation": "supported",
+      "characters": 19,
+      "full": {
+        "seconds": 1.84,
+        "peak": 0.4773,
+        "rms": 0.08041,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 23,
+        "frameSamples": [1920],
+        "seconds": 1.84,
+        "samplesRatio": 1,
+        "stepRatio": 227.97,
+        "fullStepRatio": 227.97
+      }
+    },
+    {
+      "id": "medium-two-sentences",
+      "probes": "Two sentences in one call: the seam between them is where a per-segment model can clip.",
+      "expectation": "supported",
+      "characters": 55,
+      "full": {
+        "seconds": 4,
+        "peak": 0.4385,
+        "rms": 0.0598,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 50,
+        "frameSamples": [1920],
+        "seconds": 4,
+        "samplesRatio": 1,
+        "stepRatio": 160.09,
+        "fullStepRatio": 160.09
+      }
+    },
+    {
+      "id": "long-paragraph",
+      "probes": "The sentence the benchmark input is based on: long enough to cross any segment budget and to expose drift over several seconds.",
+      "expectation": "supported",
+      "characters": 271,
+      "full": {
+        "seconds": 14.16,
+        "peak": 0.4514,
+        "rms": 0.06679,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 177,
+        "frameSamples": [1920],
+        "seconds": 14.16,
+        "samplesRatio": 1,
+        "stepRatio": 58.95,
+        "fullStepRatio": 58.95
+      }
+    },
+    {
+      "id": "digits",
+      "probes": "Numbers and a clock time. The profile has no number expansion (M1 §9.1), and a colon is outside the vocabulary — so this is expected to be read as bytes, not as `four` and `ten forty-five`.",
+      "expectation": "known-limitation",
+      "characters": 42,
+      "full": {
+        "seconds": 3.44,
+        "peak": 0.4888,
+        "rms": 0.05911,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 43,
+        "frameSamples": [1920],
+        "seconds": 3.44,
+        "samplesRatio": 1,
+        "stepRatio": 79.3,
+        "fullStepRatio": 79.3
+      }
+    },
+    {
+      "id": "currency",
+      "probes": "Currency. `€` is outside the 4 000-token vocabulary, so it degrades to `<unk>` without byte fallback (M1 §8).",
+      "expectation": "known-limitation",
+      "characters": 17,
+      "full": {
+        "seconds": 2.16,
+        "peak": 0.3409,
+        "rms": 0.03832,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 27,
+        "frameSamples": [1920],
+        "seconds": 2.16,
+        "samplesRatio": 1,
+        "stepRatio": 357.64,
+        "fullStepRatio": 357.64
+      }
+    },
+    {
+      "id": "proper-nouns",
+      "probes": "Unseen proper nouns, an abbreviation with a period, and non-ASCII letters (`í`). Pronounces what the vocabulary can encode.",
+      "expectation": "supported",
+      "characters": 42,
+      "full": {
+        "seconds": 3.12,
+        "peak": 0.4089,
+        "rms": 0.05817,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 39,
+        "frameSamples": [1920],
+        "seconds": 3.12,
+        "samplesRatio": 1,
+        "stepRatio": 79.77,
+        "fullStepRatio": 79.77
+      }
+    },
+    {
+      "id": "punctuation",
+      "probes": "Em dashes, an exclamation-question pair, and an ellipsis: whether punctuation changes prosody or is dropped.",
+      "expectation": "known-limitation",
+      "characters": 37,
+      "full": {
+        "seconds": 3.12,
+        "peak": 0.3209,
+        "rms": 0.04764,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 39,
+        "frameSamples": [1920],
+        "seconds": 3.12,
+        "samplesRatio": 1,
+        "stepRatio": 424.34,
+        "fullStepRatio": 424.34
+      }
+    },
+    {
+      "id": "long-unpunctuated",
+      "probes": "No terminators at all: the segmenter cannot split it, so the model receives one long segment and has to invent the phrasing.",
+      "expectation": "known-limitation",
+      "characters": 240,
+      "full": {
+        "seconds": 12.88,
+        "peak": 0.4139,
+        "rms": 0.06298,
+        "clipped": 0,
+        "silenceRatio": 0
+      },
+      "stream": {
+        "chunks": 161,
+        "frameSamples": [1920],
+        "seconds": 12.88,
+        "samplesRatio": 1,
+        "stepRatio": 50.78,
+        "fullStepRatio": 50.78
+      }
+    }
+  ],
+  "determinism": {
+    "caseId": "short-declarative",
+    "identical": true,
+    "maxDiff": 0
+  },
+  "listening": {
+    "score": "pending",
+    "protocol": "Blind A/B/C over the three dtypes per corpus case, 1–5 naturalness, at least three raters, median reported. The WAV files this sweep writes are the stimulus set.",
+    "raters": 0
+  },
+  "notes": [
+    "Temperature 0: `versusReference` compares sample by sample against the fp32 run.",
+    "`stream.samplesRatio` is the concatenated stream length over the full-utterance length from the same configuration, so it isolates the stream path from model variance.",
+    "Audio files are written under bench/report/audio/ and are git-ignored; the JSON report is the evidence.",
+    "The listening score stays \"pending\" until a human runs the protocol in listening.md.",
+    "This run is the reference every other dtype is compared against."
+  ]
+}

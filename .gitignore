@@ -12,6 +12,10 @@ bench/**/__screenshots__/
 packages/**/tests/__screenshots__/
 spike/out/
 spike/.cache/
+# Benchmark reports are committed evidence: every number in docs/performance.md traces to a file
+# here. Only the WAV stimulus set and the warmed caches are artifacts.
+bench/.cache/
+bench/report/audio/
 *.gif
 *.png
 *.jpg
@@ -19,7 +23,6 @@ spike/.cache/
 *.webp
 !docs/gifs/**
 !docs/media/**
-bench/report/
 lite-speech-core-*.tgz
 lite-speech-engine-onnx-*.tgz
 lite-speech-mvp.md

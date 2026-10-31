@@ -69,7 +69,9 @@ The default is boring on purpose.
 Why `fp32` on CPU: every quantized variant measured 20–26 % **slower** warm in the
 [M1 spike](https://github.com/realdeepnull/lite-speech/blob/main/docs/spike/transformers-js-phonon.md),
 so quantization there buys download size and memory, not speed. `q4` is the
-documented cheaper opt-in.
+documented cheaper opt-in. The M5 sweep re-measured this with percentiles rather than a single
+sample; see [docs/performance.md](https://github.com/realdeepnull/lite-speech/blob/main/docs/performance.md)
+for the per-device numbers and whether your host is expected to behave the same way.
 
 An accepted `webgpu` request is **not** evidence that a GPU ran: under
 `onnxruntime-node` the runtime lists `webgpu` and an explicit WebGPU load succeeds
@@ -135,9 +137,14 @@ These come from the model profile, not from the engine:
 - No text normalization: numbers, dates, currency, and some symbols are read as bytes
   rather than spelled out.
 - No voice cloning. Voices are precomputed embeddings.
-- Determinism requires `temperature: 0`; the default samples.
-- Quantized output is intelligible but not numerically close to `fp32`, so quality has
-  to be assessed by listening.
+- Determinism requires `temperature: 0`; the default samples. Pass
+  `createOnnxEngine({ temperature: 0 })` — without it the option was unreachable, and the
+  claim in this list would have been untestable.
+- Quantized output is intelligible but not numerically close to `fp32`: at temperature 0 the two
+  are individually reproducible yet uncorrelated with each other, so the difference is a different
+  performance of the same sentence rather than added noise. Quality therefore has to be assessed by
+  listening, not by waveform distance — see
+  [docs/performance.md](https://github.com/realdeepnull/lite-speech/blob/main/docs/performance.md).
 
 ## Documentation
 

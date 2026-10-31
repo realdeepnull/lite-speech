@@ -5,7 +5,7 @@
  * discard, worker death — would otherwise only be covered by the browser suite. A fake worker makes
  * that path deterministic in Node and lets a test observe every posted message.
  */
-import { createTts, isTtsError, TTS_ERROR_CODES } from "@lite-speech/core";
+import { createTts, isTtsError, TTS_ERROR_CODES, type DebugEvent } from "@lite-speech/core";
 import { describe, expect, it } from "vitest";
 
 import { createOnnxEngine } from "../src/create-onnx-engine.js";
@@ -386,6 +386,60 @@ describe("engine on a worker", () => {
     expect(events).toContain("load-start");
     expect(events).toContain("load-done");
     expect(events).toContain("device-resolved");
+    await tts.dispose();
+  });
+
+  it("forwards the worker's model-call timing as inference events", async () => {
+    const worker = new FakeWorker();
+    const engine = await createOnnxEngine({
+      device: "wasm",
+      dtype: "fp32",
+      worker: () => worker as unknown as Worker,
+    });
+    const events: DebugEvent[] = [];
+    const tts = createTts({
+      engine,
+      offline: "allow",
+      onDebug: (event) => events.push(event),
+    });
+    const preload = tts.preload();
+    const load = await worker.waitFor("load");
+    replyLoaded(worker, load["id"] as number);
+    await preload;
+
+    // A stream's frames are separate `stream-next` requests, so `inference-done` arrives after the
+    // last frame request settled. It must still reach `onDebug`.
+    const iterator = tts.stream("Hello there.")[Symbol.asyncIterator]();
+    // The generator body runs on the first `next()`, so the pull has to start before the wait.
+    const firstPull = iterator.next();
+    const open = await worker.waitFor("stream-open");
+    const openId = open["id"] as number;
+    worker.reply({ kind: "inference-start", id: openId, textLength: 12 });
+    worker.reply({ kind: "stream-opened", id: openId });
+    const next = await worker.waitFor("stream-next");
+    worker.reply({
+      kind: "chunk",
+      id: next["id"] as number,
+      pcm: new Float32Array([0.1, -0.1]).buffer as ArrayBuffer,
+      sampleRate: 24_000,
+    });
+    await firstPull;
+    worker.reply({
+      kind: "inference-done",
+      id: openId,
+      durationMs: 12,
+      samples: 2,
+      sampleRate: 24_000,
+    });
+    worker.reply({ kind: "stream-end", id: next["id"] as number });
+
+    expect(events.filter((event) => event.type === "inference-start")).toEqual([
+      expect.objectContaining({ requestId: openId, textLength: 12, engine: "onnx" }),
+    ]);
+    expect(events.filter((event) => event.type === "inference-done")).toEqual([
+      expect.objectContaining({ requestId: openId, samples: 2, sampleRate: 24_000 }),
+    ]);
+    await iterator.return?.();
     await tts.dispose();
   });
 

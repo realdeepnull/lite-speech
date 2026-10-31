@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31T23:41:14.849Z",
+  "runtime": "chromium",
+  "phase": "warm",
+  "status": "ok",
+  "environment": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+    "os": "Win32",
+    "cores": 24,
+    "gpu": "amd rdna-3",
+    "device": "webgpu",
+    "dtype": "q4f16"
+  },
+  "model": {
+    "id": "onnx-community/phonon-31m-en-ONNX",
+    "revision": "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4",
+    "streaming": "incremental-frames",
+    "sampleRate": 24000
+  },
+  "text": {
+    "id": "bench-standard-v1",
+    "characters": 126,
+    "audioSeconds": 7.36
+  },
+  "download": {
+    "bytes": 0,
+    "files": 0,
+    "megabytes": 0,
+    "licenses": ["Apache-2.0"]
+  },
+  "coldStartMs": 1116.69,
+  "runs": [
+    {
+      "loadMs": 1116.69,
+      "ttfaMs": 97.24,
+      "streamMs": 2593.02,
+      "audioSeconds": 7.44,
+      "rtf": 0.349,
+      "chunks": 94,
+      "first": true
+    },
+    {
+      "loadMs": 0,
+      "ttfaMs": 29.05,
+      "streamMs": 2152.22,
+      "audioSeconds": 7.36,
+      "rtf": 0.292,
+      "chunks": 93,
+      "first": false
+    },
+    {
+      "loadMs": 0.01,
+      "ttfaMs": 28.52,
+      "streamMs": 2207.97,
+      "audioSeconds": 7.44,
+      "rtf": 0.297,
+      "chunks": 94,
+      "first": false
+    },
+    {
+      "loadMs": 0,
+      "ttfaMs": 30.52,
+      "streamMs": 2321.24,
+      "audioSeconds": 7.2,
+      "rtf": 0.322,
+      "chunks": 91,
+      "first": false
+    },
+    {
+      "loadMs": 0,
+      "ttfaMs": 40.73,
+      "streamMs": 2477.18,
+      "audioSeconds": 7.12,
+      "rtf": 0.348,
+      "chunks": 90,
+      "first": false
+    }
+  ],
+  "summary": {
+    "loadMs": {
+      "n": 1,
+      "min": 1116.69,
+      "p50": 1116.69,
+      "p95": 1116.69,
+      "max": 1116.69,
+      "mean": 1116.69
+    },
+    "ttfaMs": {
+      "n": 5,
+      "min": 28.52,
+      "p50": 30.52,
+      "p95": 97.24,
+      "max": 97.24,
+      "mean": 45.21
+    },
+    "rtf": {
+      "n": 5,
+      "min": 0.292,
+      "p50": 0.322,
+      "p95": 0.349,
+      "max": 0.349,
+      "mean": 0.322
+    },
+    "streamMs": {
+      "n": 5,
+      "min": 2152.22,
+      "p50": 2321.24,
+      "p95": 2593.02,
+      "max": 2593.02,
+      "mean": 2350.33
+    }
+  },
+  "cancellationMs": {
+    "n": 3,
+    "min": 0.21,
+    "p50": 0.24,
+    "p95": 0.65,
+    "max": 0.65,
+    "mean": 0.37
+  },
+  "notes": [
+    "Warm phase: Cache Storage was reused; sizes are what still had to be fetched.",
+    "Memory is not reported: a Chromium renderer's heap has no comparable per-model figure, and `performance.memory` is not standardized.",
+    "The device is the one the page resolved; a successful WebGPU load is not by itself proof that the operators ran on the GPU (M1 §5.1)."
+  ]
+}

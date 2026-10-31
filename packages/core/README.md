@@ -103,6 +103,10 @@ await tts.dispose();
   iterator then fails with `ABORTED`.
 - **Streaming is classified, not promised**: `TtsCapabilities.streaming` reports
   `"incremental-frames" | "sentence-chunks" | "utterance"` per model profile.
+- **Debug events are opt-in and free when unused**: `onDebug` receives a discriminated
+  union covering load, device resolution and fallback, stream start, time to first
+  chunk, the model call itself, and aborts. Measured values per runtime are in
+  [docs/performance.md](https://github.com/realdeepnull/lite-speech/blob/main/docs/performance.md).
 - **Zero runtime dependencies**; `size-limit` guards an 8 kB min+gzip budget.
   _Measured after M4: 6.95 kB. The budget was 7 kB after M2 (6.35 kB measured); M4's
   provisioning and integrity layer consumed the headroom, so the limit moved to 8 kB

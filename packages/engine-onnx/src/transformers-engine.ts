@@ -126,6 +126,24 @@ export interface TransformersEngineOptions {
     | undefined;
   /** Filesystem cache probe, used where Cache Storage does not exist. */
   readonly fsProbe?: FsProbe | undefined;
+  /**
+   * Sampling temperature forwarded to every synthesis request.
+   *
+   * The worker protocol has always accepted a temperature; without this option a caller had no way
+   * to set it, so the documented "`temperature: 0` makes generation deterministic" was unreachable
+   * through the public API. `undefined` keeps the model's own `phonon.temperature`.
+   */
+  readonly temperature?: number | undefined;
+  /**
+   * Device a policy wanted but could not use, e.g. `"webgpu"` when `device: "auto"` fell back.
+   *
+   * Set by `createOnnxEngine()` from its device resolution; it only affects observability, so the
+   * engine can report the fallback as a `device-fallback` event instead of leaving the decision in
+   * a field the caller has to remember to read.
+   */
+  readonly fallbackFrom?: string | undefined;
+  /** Human-readable reason for {@link TransformersEngineOptions.fallbackFrom}. */
+  readonly fallbackReason?: string | undefined;
 }
 
 /**
@@ -143,6 +161,9 @@ export class TransformersEngine implements TtsEngine {
   readonly #createWorker: (() => Worker) | undefined;
   readonly #inThreadLoader: TransformersEngineOptions["inThreadLoader"];
   readonly #fsProbe: FsProbe | undefined;
+  readonly #fallbackFrom: string | undefined;
+  readonly #fallbackReason: string | undefined;
+  readonly #temperature: number | undefined;
 
   #worker: Worker | undefined;
   /** In-thread host, used only where `Worker` is unavailable. */
@@ -164,6 +185,9 @@ export class TransformersEngine implements TtsEngine {
     this.#createWorker = options.createWorker;
     this.#inThreadLoader = options.inThreadLoader;
     this.#fsProbe = options.fsProbe;
+    this.#fallbackFrom = options.fallbackFrom;
+    this.#fallbackReason = options.fallbackReason;
+    this.#temperature = options.temperature;
   }
 
   // ------------------------------------------------------------------ identity
@@ -445,6 +469,19 @@ export class TransformersEngine implements TtsEngine {
   ): Promise<LoadedState> {
     const started = now();
     this.#debug({ type: "load-start", timestamp: started, engine: this.id });
+    // Before `device-resolved`, so a consumer reading the events in order sees "wanted webgpu,
+    // used wasm" and then the device that actually ran — never a resolved device with no hint
+    // that the policy had asked for something else.
+    if (this.#fallbackFrom !== undefined) {
+      this.#debug({
+        type: "device-fallback",
+        timestamp: started,
+        engine: this.id,
+        from: this.#fallbackFrom,
+        to: this.#device,
+        ...(this.#fallbackReason !== undefined && { reason: this.#fallbackReason }),
+      });
+    }
     this.#debug({
       type: "device-resolved",
       timestamp: started,
@@ -579,6 +616,7 @@ export class TransformersEngine implements TtsEngine {
         id: this.#nextId(),
         text,
         ...(loaded.voice && { voice: loaded.voice.id }),
+        ...(this.#temperature !== undefined && { temperature: this.#temperature }),
       },
       options.signal,
     );
@@ -707,6 +745,7 @@ export class TransformersEngine implements TtsEngine {
           id,
           text,
           ...(loaded.voice && { voice: loaded.voice.id }),
+          ...(this.#temperature !== undefined && { temperature: this.#temperature }),
         },
         signal,
       );
@@ -992,6 +1031,14 @@ export class TransformersEngine implements TtsEngine {
 
   /** Correlates one worker response with its pending request. */
   #handleMessage(response: WorkerResponse): void {
+    // Model-call timing is telemetry, not a settling response, and it is scoped to a *session*
+    // rather than to a request: a stream's frames are separate requests, so `inference-done`
+    // arrives after the last `stream-next` settled. Forwarding before the pending lookup keeps it
+    // from being discarded as a late frame of a finished request.
+    if (response.kind === "inference-start" || response.kind === "inference-done") {
+      this.#forwardInferenceEvent(response);
+      return;
+    }
     const pending = this.#pending.get(response.id);
     if (!pending) {
       // A late frame of a cancelled or completed request: discard it.
@@ -1000,8 +1047,6 @@ export class TransformersEngine implements TtsEngine {
     switch (response.kind) {
       case "progress":
       case "capabilities":
-      case "inference-start":
-      case "inference-done":
         pending.onEvent?.(response);
         return;
       case "error":
@@ -1072,6 +1117,42 @@ export class TransformersEngine implements TtsEngine {
 
   #debug(event: DebugEvent): void {
     this.#onDebug?.(event);
+  }
+
+  /**
+   * Re-publishes the worker's model-call timing as core debug events.
+   *
+   * The worker already brackets generation with `inference-start`/`inference-done`; dropping them
+   * in `#handleMessage` would leave `onDebug` without the one pair that measures the model call
+   * itself rather than the queueing around it. The worker speaks its own protocol, so the fields
+   * are mapped explicitly instead of spread: a protocol change then fails to compile here instead
+   * of leaking an unrelated shape into the public event.
+   */
+  #forwardInferenceEvent(response: WorkerResponse): void {
+    switch (response.kind) {
+      case "inference-start":
+        this.#debug({
+          type: "inference-start",
+          timestamp: now(),
+          engine: this.id,
+          requestId: response.id,
+          textLength: response.textLength,
+        });
+        return;
+      case "inference-done":
+        this.#debug({
+          type: "inference-done",
+          timestamp: now(),
+          engine: this.id,
+          requestId: response.id,
+          durationMs: response.durationMs,
+          samples: response.samples,
+          sampleRate: response.sampleRate,
+        });
+        return;
+      default:
+        return;
+    }
   }
 
   /** The load identity of a model + voice on the resolved device and dtype. */

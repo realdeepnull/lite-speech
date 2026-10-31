@@ -46,20 +46,24 @@ demo against the built ESM output lives in [examples/demo](examples/demo).
 
 Pre-release. Milestones are tracked in the [roadmap](docs/ROADMAP.md):
 
-| Milestone | Theme                 | State   |
-| --------- | --------------------- | ------- |
-| M0        | Foundation            | done    |
-| M1        | Inference spike       | done    |
-| M2        | Core MVP              | done    |
-| M3        | ONNX engine MVP       | done    |
-| M4        | Assets & provisioning | done    |
-| M5        | Measurement           | next    |
-| M6        | Beta `0.1.0`          | planned |
+| Milestone | Theme                 | State |
+| --------- | --------------------- | ----- |
+| M0        | Foundation            | done  |
+| M1        | Inference spike       | done  |
+| M2        | Core MVP              | done  |
+| M3        | ONNX engine MVP       | done  |
+| M4        | Assets & provisioning | done  |
+| M5        | Measurement           | done  |
+| M6        | Beta `0.1.0`          | next  |
 
 The M1 evidence — pins, measured sizes and latencies, streaming classification, and
 the go/no-go decision — is in
 [docs/spike/transformers-js-phonon.md](docs/spike/transformers-js-phonon.md). Its
 runnable scripts live in [spike/](spike) and are never published.
+
+The M5 evidence — per-runtime latency, memory, download size, and the quality sweep — is in
+[docs/performance.md](docs/performance.md), with the JSON reports it is derived from under
+[bench/report/](bench/report). The scripts that produce them live in [bench/](bench).
 
 ## Packages
 
@@ -85,6 +89,10 @@ npm run size         # size-limit per package
 npm run pack:check   # build + artifact validation per package
 ```
 
+Benchmark and quality measurements are separate from this sequence — they need the network for a
+cold run and take minutes, so they are documented in [bench/README.md](bench/README.md) and are
+committed as reports rather than run on every change.
+
 Per-package scripts fan out with `--workspaces --if-present`, so a package opts
 into `build`, `typecheck`, `test`, `size`, or `pack:check` only when it defines
 the script; `lint`, `format`, `format:check`, and `knip` run over the repository.
@@ -96,6 +104,7 @@ Tooling is added just in time; the adoption plan lives in the
 - [Product concept](docs/lite-speech-concept.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Provisioning](docs/provisioning.md)
+- [Performance and quality](docs/performance.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## License

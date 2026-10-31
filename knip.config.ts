@@ -17,10 +17,12 @@ const config: KnipConfig = {
       entry: ["index.html", "main.js"],
     },
     "bench/benchmark": {
-      entry: [],
+      // The entry points are the CLI scripts themselves; knip derives them from the package
+      // scripts, so listing them again is redundant.
+      project: ["src/**/*.ts", "tests/**/*.ts"],
     },
     "bench/quality": {
-      entry: [],
+      project: ["src/**/*.ts", "tests/**/*.ts"],
     },
   },
   // The protocol module is a type-level contract shared by two build entries; a response type is

@@ -1,8 +1,8 @@
 # Roadmap of `lite-speech`
 
 > **Status:** M0 (repository and toolchain foundation), M1 (inference spike),
-> M2 (`@lite-speech/core` MVP), M3 (ONNX engine MVP), and M4 (assets,
-> offline policy, provisioning) implemented; M5 is next.
+> M2 (`@lite-speech/core` MVP), M3 (ONNX engine MVP), M4 (assets,
+> offline policy, provisioning), and M5 (measurement) implemented; M6 is next.
 > Milestones below keep their checklist state.
 > **Date:** October 31, 2026
 > **Target:** First public release `0.1.0` of `@lite-speech/core` and
@@ -356,26 +356,62 @@ than a fake, since the defect is in the dependency, not in this repository.
 
 **Deliverables**
 
-- [ ] `onDebug` / `onProgress` typed events behind `?.(…)` calls, with zero cost
+- [x] `onDebug` / `onProgress` typed events behind `?.(…)` calls, with zero cost
       when unused: `device-resolved`, `worker-spawn`, `load-done`,
       `stream-start`, `time-to-first-chunk`, `inference-done`,
       `device-fallback`.
-- [ ] `bench/benchmark`: cold start, warm time-to-first-audio (p50/p95), real-time
+      _`device-fallback` and the worker's `inference-start`/`inference-done` pair were
+      the two events the type declared but nothing emitted; both are now published from
+      the engine, and `device-fallback` is ordered before `device-resolved` so a
+      consumer sees "wanted WebGPU, used WASM" before the device that actually ran.
+      A stream's `inference-done` arrives after the last frame request settled, so it is
+      forwarded before the pending-request lookup rather than discarded as a late frame._
+- [x] `bench/benchmark`: cold start, warm time-to-first-audio (p50/p95), real-time
       factor, peak RAM, cancellation latency, download size per dtype.
-- [ ] `bench/quality`: fixed corpus, chunk-consistency check (stream vs. full
+      _Node.js (`onnxruntime-node`), Chromium WASM, and Chromium WebGPU, ten JSON
+      reports. Statistics are nearest-rank, so a quoted p95 is a duration that actually
+      occurred._
+- [x] `bench/quality`: fixed corpus, chunk-consistency check (stream vs. full
       utterance), and a documented MOS-style listening score.
-- [ ] JSON reports under `bench/report/` recording UA, hardware, model revision,
+      _Nine cases, four of them documented limitations. The listening score is
+      `"pending"`: the harness writes the stimulus set and the blind protocol but does not
+      invent the number._
+- [x] JSON reports under `bench/report/` recording UA, hardware, model revision,
       quantization, and date.
-- [ ] `docs/performance.md` with reproducible tables and an explicit statement of
+      _Committed rather than ignored. `bench/report/summary.md` and `quality.md` are
+      rendered from those files, so the prose cannot drift from the evidence._
+- [x] `docs/performance.md` with reproducible tables and an explicit statement of
       the supported envelope.
 
 **Exit gate**
 
-- Every number in the README/docs traces to a committed benchmark report.
-- The streaming classification from M1 is confirmed by measurement per device
-  (WASM vs. WebGPU).
-- A documented envelope exists: minimum device class, minimum RAM, download
-  size, and latency band for the shipped profile.
+- [x] Every number in the README/docs traces to a committed benchmark report.
+- [x] The streaming classification from M1 is confirmed by measurement per device
+      (WASM vs. WebGPU).
+      _Frame size is 1 920 samples on every device and dtype, and the concatenated
+      stream is exactly as long as the same configuration's full utterance, so the
+      "incremental frames" claim holds rather than being a protocol shape._
+- [x] A documented envelope exists: minimum device class, minimum RAM, download
+      size, and latency band for the shipped profile.
+
+**Outcome:** three measurements changed what the project can claim.
+
+1. **Waveform distance is not a quality metric for this model.** At `temperature: 0` the
+   output is byte-identical run to run, yet `q4` and `q4f16` correlate with `fp32` at
+   **≈ 0** (SNR −1.4 to −2.9 dB). The quantized graph is not a noisy copy of the same
+   waveform; it takes a different trajectory through the flow model, so the prosody and the
+   stop point differ. Any future quality gate therefore has to be a listening test, and D5
+   (default dtype) stays open until the score exists instead of being "closed" on a number
+   that means nothing.
+2. **WebGPU cannot be measured headlessly on Windows.** `navigator.gpu` exists but
+   `requestAdapter()` returns `null` for every flag combination tried; the same Chromium
+   launched headed reports `amd rdna-3` with `shader-f16`. The driver therefore measures
+   WebGPU headed and records `status: "unavailable"` when no adapter answers, which is how a
+   CI host without a GPU will appear in the table.
+3. **A warm cache was a lie in the first version of the harness.** Cache Storage is keyed by
+   origin and lives in the browser profile: an ephemeral context per run, or a server on a
+   random port, made every "warm" run a cold one. Both are now fixed — one persistent profile
+   per device and a fixed port — and a warm run reports `download: 0`.
 
 ---
 
@@ -538,9 +574,17 @@ remote assets resolved through the manifest.
 | D1  | Does `prepare()` ship in core at `0.1.0`, or is provisioning app-side?       | M4         |
 | D2  | Is one engine per instance enough, or is multi-engine fan-out required?      | M4         |
 | D3  | What is the minimum granularity we are willing to call "streaming" publicly? | M1         |
-| D4  | Final npm scope and package names (`@lite-speech/*` is provisional)          | M5         |
-| D5  | Default dtype per device/profile after measured quality comparison           | M5         |
+| D4  | Final npm scope and package names (`@lite-speech/*` is provisional)          | M6         |
+| D5  | Default dtype per device/profile after measured quality comparison           | M5 → M6    |
 | D6  | Supported browser matrix and Node.js floor for `0.1.0`                       | M5         |
+
+_Status of the M5 decisions._ D6 is closed by measurement (see
+[performance.md §7](./performance.md#7-decisions-closed-by-these-measurements)): Node.js 22/24/26
+on `onnxruntime-node`, Chromium with WASM anywhere, WebGPU only where `requestAdapter()` answers.
+D5 is **not** closed: the measured quality comparison turned out to be unusable — quantized and
+`fp32` graphs are reproducible individually but uncorrelated with each other, so waveform distance
+cannot rank them. D4 stays open because the scope can only be claimed on the registry, which is a
+release action, not a measurement.
 
 ## 10. Risks and mitigations
 
