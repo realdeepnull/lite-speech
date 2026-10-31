@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run knip
+      # Browser tests (engine-onnx + bench suites) need Playwright Chromium
+      - run: npx playwright install chromium
+      - run: npm run test
+        env:
+          CI: "true"
+      # Quality suite — CI gate (fails on translation regressions)
+      - run: npm run test:quality
+        env:
+          CI: "true"
+
+  benchmark:
+    runs-on: ubuntu-latest
+    # Report only — no threshold gating (HF download + browser variance)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install chromium
+      - run: npm run bench
+        env:
+          CI: "true"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: benchmark-report
+          path: bench/report/
