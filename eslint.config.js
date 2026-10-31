@@ -1,4 +1,5 @@
 import js from "@eslint/js";
+import { defineConfig, globalIgnores } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 /**
@@ -27,18 +28,16 @@ const browserGlobals = {
   AudioContext: "readonly",
 };
 
-export default tseslint.config(
+export default defineConfig(
   js.configs.recommended,
-  ...tseslint.configs.recommended,
-  {
-    ignores: [
-      "**/dist/**",
-      "**/node_modules/**",
-      "**/coverage/**",
-      "spike/out/**",
-      "spike/.cache/**",
-    ],
-  },
+  tseslint.configs.recommended,
+  globalIgnores([
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/coverage/**",
+    "spike/out/**",
+    "spike/.cache/**",
+  ]),
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
