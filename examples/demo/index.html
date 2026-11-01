@@ -98,10 +98,12 @@
   <body>
     <h1>lite-speech demo</h1>
     <p class="intro">
-      Phonon 31M EN running locally in a worker through the public
+      A speech model running locally in a worker through the public
       <code>@lite-speech/core</code> API. Nothing is uploaded; the model is downloaded from the
-      Hugging Face Hub once and served from Cache Storage afterwards. Needs the built packages
-      (<code>npm run build</code>) and a static server rooted at the repository.
+      Hugging Face Hub once and served from Cache Storage afterwards. Models, languages and voices
+      come from a catalogue built out of manifests, so the selectors below are the catalogue rather
+      than a hard-coded list. Needs the built packages (<code>npm run build</code>) and a static
+      server rooted at the repository.
     </p>
 
     <fieldset>
@@ -109,15 +111,37 @@
       <dl>
         <dt>WebGPU</dt>
         <dd data-role="gpu">probing…</dd>
+        <dt>Device · dtype</dt>
+        <dd data-role="device">—</dd>
+        <dt>Languages</dt>
+        <dd data-role="languages">—</dd>
+        <dt>Models</dt>
+        <dd data-role="models">—</dd>
         <dt>Voices</dt>
         <dd data-role="voice-count">—</dd>
-        <dt>Model</dt>
+        <dt>Selected model</dt>
         <dd data-role="model">not loaded</dd>
       </dl>
     </fieldset>
 
     <fieldset>
+      <legend>Catalogue</legend>
+      <p class="intro">
+        What the engine was given. Adding a model, a language or a family means adding a manifest
+        here — no engine change. See
+        <code>docs/adding-a-model.md</code>.
+      </p>
+      <pre data-role="catalogue"></pre>
+    </fieldset>
+
+    <fieldset>
       <legend>Synthesize</legend>
+      <label>
+        Language
+        <select data-role="language">
+          <option value="">loading…</option>
+        </select>
+      </label>
       <label>
         Voice
         <select data-role="voice">

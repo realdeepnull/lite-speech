@@ -2,19 +2,18 @@
  * `createOnnxEngine()`: the one factory an application calls.
  *
  * It resolves device/dtype *asynchronously* once, then hands a fully configured
- * {@link TransformersEngine} to the caller. `createTts()` is synchronous, so it cannot await
- * a WebGPU probe — which is why the factory is async while the engine it builds is not.
+ * {@link TransformersEngine} to the caller. `createTts()` is synchronous, so it cannot await a
+ * WebGPU probe — which is why the factory is async while the engine it builds is not.
+ *
+ * The factory is catalogue-agnostic: models, voices, and families are inputs. The built-in
+ * catalogue is only the default, so supporting another model, another language, or another
+ * runner never requires a code change here.
  */
 import type { ModelManifest, VoiceManifest } from "@lite-speech/core";
 
-import {
-  PHONON_LANGUAGE,
-  PHONON_MODEL,
-  PHONON_VOICES_MANIFEST,
-  createDefaultRegistry,
-  type EngineRegistry,
-} from "./models.js";
-import { DEFAULT_PROFILES, resolveProfile, type ProfileRegistry } from "./profiles.js";
+import { createRegistry, type EngineRegistry } from "./catalog.js";
+import { resolveRunner, unknownFamilyError, type FamilyRegistry } from "./families.js";
+import { PHONON_MODEL, PHONON_VOICES_MANIFEST, createDefaultRegistry } from "./models.js";
 import { TransformersEngine, type FsProbe } from "./transformers-engine.js";
 import {
   resolveDeviceDtype,
@@ -22,11 +21,6 @@ import {
   type OnnxDevice,
   type OnnxDtype,
 } from "./webgpu.js";
-
-/** A loader for the in-thread fallback, normally `loadPhonon` imported lazily. */
-export type InThreadLoader = NonNullable<
-  ConstructorParameters<typeof TransformersEngine>[0]["inThreadLoader"]
->;
 
 /** Options for {@link createOnnxEngine}. */
 export interface OnnxEngineOptions {
@@ -45,27 +39,33 @@ export interface OnnxEngineOptions {
    * does not need `shader-f16`).
    */
   readonly dtype?: OnnxDtype;
-  /** Overrides the language → model map. */
-  readonly models?: Readonly<Record<string, ModelManifest>>;
-  /** Overrides the voice list. */
-  readonly voices?: readonly VoiceManifest[];
-  /** Replaces the built-in registry entirely; takes precedence over `models`/`voices`. */
-  readonly registry?: EngineRegistry;
-  /** Additional or replacement profiles, merged over the built-in one. */
-  readonly profiles?: ProfileRegistry;
   /**
-   * Worker factory. Defaults to a module worker created from this package's `./worker`
-   * export. Pass `false` to run inference in-thread (Node.js), together with
-   * {@link OnnxEngineOptions.inThreadLoader}.
+   * The models to register. Each manifest declares its `family` and the `languages` it serves,
+   * so this is how an application adds a model, a language, or a mirror without a new package.
+   */
+  readonly models?: readonly ModelManifest[];
+  /** The voices to register, across every model. */
+  readonly voices?: readonly VoiceManifest[];
+  /** Replaces the built-in catalogue entirely; takes precedence over `models`/`voices`. */
+  readonly registry?: EngineRegistry;
+  /**
+   * Additional or replacement runner factories, merged over any the caller already built.
+   *
+   * The built-in families live in `runners.ts` and import the model runtime, so they are not
+   * imported here: the Node entry and the worker both pass their own registry, which keeps this
+   * module — the engine's main-thread surface — free of Transformers.js.
+   */
+  readonly families?: FamilyRegistry;
+  /**
+   * Worker factory. Defaults to a module worker created from this package's `./worker` export.
+   * Pass `false` to run inference in-thread (Node.js).
    */
   readonly worker?: (() => Worker) | false;
   /**
-   * Sampling temperature. Defaults to the model's own `phonon.temperature`; `0` makes generation
-   * deterministic, which is what a quality comparison between dtypes needs.
+   * Sampling temperature. Defaults to the model's own value; `0` makes generation deterministic,
+   * which is what a quality comparison between dtypes needs.
    */
   readonly temperature?: number;
-  /** Loader for the in-thread path; required when `worker` is `false` or `Worker` is missing. */
-  readonly inThreadLoader?: InThreadLoader;
   /** Filesystem cache probe for Node.js, where Cache Storage does not exist. */
   readonly fsProbe?: FsProbe;
 }
@@ -76,6 +76,8 @@ export interface OnnxEngine extends TransformersEngine {
   readonly resolved: DeviceResolution;
   /** Registry the engine reads; useful for introspection and tests. */
   readonly registry: EngineRegistry;
+  /** Runner factories available to the in-thread path. */
+  readonly families: FamilyRegistry;
 }
 
 /** Environment default when the caller does not ask for a specific device. */
@@ -89,7 +91,7 @@ function supportsWorkers(): boolean {
  * `new URL("./worker.js", import.meta.url)` is the form every bundler understands, and the
  * `./worker` package export exists so an application that copies its own worker file has a
  * documented entry to point at. A relative URL only resolves in a browser; in Node.js the
- * caller passes `worker: false` and an `inThreadLoader`.
+ * caller passes `worker: false`.
  */
 function defaultWorkerFactory(): () => Worker {
   return () => new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
@@ -108,24 +110,14 @@ function defaultWorkerFactory(): () => Worker {
  * ```
  */
 export async function createOnnxEngine(options: OnnxEngineOptions = {}): Promise<OnnxEngine> {
+  const models = options.models ?? [PHONON_MODEL];
+  const voices = options.voices ?? PHONON_VOICES_MANIFEST;
   const registry =
     options.registry ??
-    createDefaultRegistry(
-      options.models ?? { [PHONON_LANGUAGE]: PHONON_MODEL },
-      options.voices ?? PHONON_VOICES_MANIFEST,
-    );
-
-  // Validating the profile registry here, not at synthesis time, turns "I registered a
-  // profile under the wrong id" into an immediate error instead of silent Phonon audio.
-  const profiles = { ...DEFAULT_PROFILES, ...options.profiles };
-  for (const model of Object.values(options.models ?? { [PHONON_LANGUAGE]: PHONON_MODEL })) {
-    if (model.family !== undefined && resolveProfile(model.family, profiles) === undefined) {
-      throw new Error(
-        `No profile is registered for model family "${model.family}". ` +
-          `Known profiles: ${Object.keys(profiles).join(", ")}`,
-      );
-    }
-  }
+    (options.models === undefined && options.voices === undefined
+      ? createDefaultRegistry()
+      : createRegistry({ models, voices }));
+  const families: FamilyRegistry = { ...options.families };
 
   const resolved = await resolveDeviceDtype(options.device ?? defaultDeviceOption(), options.dtype);
 
@@ -134,19 +126,32 @@ export async function createOnnxEngine(options: OnnxEngineOptions = {}): Promise
       ? undefined
       : (options.worker ?? (supportsWorkers() ? defaultWorkerFactory() : undefined));
 
+  // Validating the family registry here, not at synthesis time, turns "I registered a runner
+  // under the wrong id" into an immediate error instead of a worker that fails on first load.
+  // Only the in-thread path is checked: a worker resolves its own built-in families, so the
+  // manifests it hosts cannot be cross-checked from here.
+  if (createWorker === undefined) {
+    for (const model of registry.models()) {
+      const family = model.family;
+      if (family !== undefined && resolveRunner(family, families) === undefined) {
+        throw unknownFamilyError(family, families);
+      }
+    }
+  }
+
   const engine = new TransformersEngine({
     registry,
+    families,
     device: resolved.device,
     dtype: resolved.dtype,
     ...(resolved.fallbackFrom !== undefined && { fallbackFrom: resolved.fallbackFrom }),
     ...(resolved.reason !== undefined && { fallbackReason: resolved.reason }),
     ...(options.temperature !== undefined && { temperature: options.temperature }),
     ...(createWorker !== undefined && { createWorker }),
-    ...(options.inThreadLoader !== undefined && { inThreadLoader: options.inThreadLoader }),
     ...(options.fsProbe !== undefined && { fsProbe: options.fsProbe }),
   });
 
-  return Object.assign(engine, { resolved, registry });
+  return Object.assign(engine, { resolved, registry, families });
 }
 
 /** Device option default: `"auto"` in a worker-capable runtime, `"cpu"` under Node.js. */

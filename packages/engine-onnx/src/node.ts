@@ -20,13 +20,13 @@ import { join } from "node:path";
 import { stat, unlink } from "node:fs/promises";
 
 import { createOnnxEngine, type OnnxEngine, type OnnxEngineOptions } from "./create-onnx-engine.js";
-import { loadPhonon } from "./phonon.js";
+import { DEFAULT_FAMILIES, withCacheDir } from "./runners.js";
 import type { FsProbe } from "./transformers-engine.js";
 
 /** Options for {@link createNodeOnnxEngine}. */
 export interface NodeOnnxEngineOptions extends Omit<
   OnnxEngineOptions,
-  "worker" | "inThreadLoader" | "fsProbe" | "device"
+  "worker" | "fsProbe" | "device"
 > {
   /**
    * Device under `onnxruntime-node`. Only `"cpu"` is meaningful; it is the default and the only
@@ -146,14 +146,13 @@ function createFileSystemProbe(cacheDir: string): FsProbe {
 export async function createNodeOnnxEngine(
   options: NodeOnnxEngineOptions = {},
 ): Promise<OnnxEngine> {
-  const { cacheDir, ...rest } = options;
+  const { cacheDir, families, ...rest } = options;
   const resolvedCacheDir = cacheDir ?? defaultCacheDir();
   return createOnnxEngine({
     ...rest,
+    families: withCacheDir({ ...DEFAULT_FAMILIES, ...families }, resolvedCacheDir),
     device: "cpu",
     worker: false,
-    inThreadLoader: (loadOptions, voice) =>
-      loadPhonon({ ...loadOptions, cacheDir: resolvedCacheDir }, voice),
     fsProbe: createFileSystemProbe(resolvedCacheDir),
   });
 }

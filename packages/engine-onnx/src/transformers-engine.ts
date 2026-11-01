@@ -27,6 +27,7 @@ import {
   type AssetFile,
   type AssetPlan,
   type AssetPlanFile,
+  type AssetRole,
   type AudioChunk,
   type AudioResult,
   type DebugCallback,
@@ -44,23 +45,10 @@ import {
   type VoiceManifest,
 } from "@lite-speech/core";
 
-import {
-  DTYPE_SUFFIX,
-  ENGINE_ID,
-  PHONON_VOICE_GENDERS,
-  PHONON_VOICE_NAMES,
-  assetUrl,
-  voiceAccent,
-  type EngineRegistry,
-} from "./models.js";
+import { ENGINE_ID, assetUrl, selectVariantFiles, type EngineRegistry } from "./catalog.js";
+import type { FamilyRegistry } from "./families.js";
 import { createModelHost, type ModelHost } from "./model-host.js";
-import type { LoadedPhonon } from "./phonon.js";
-import type {
-  ErrorResponse,
-  ProgressResponse,
-  WorkerRequest,
-  WorkerResponse,
-} from "./worker-protocol.js";
+import type { ErrorResponse, WorkerRequest, WorkerResponse } from "./worker-protocol.js";
 import type { ResolvedDtype } from "./webgpu.js";
 
 /// How long dispose() waits for the worker to acknowledge a release before terminating it.
@@ -105,25 +93,16 @@ export interface FsProbe {
 /** Everything the engine needs beyond the manifests. */
 export interface TransformersEngineOptions {
   readonly registry: EngineRegistry;
+  /**
+   * Runner factories by family, used only by the in-thread path. The worker owns its own
+   * registry, so this is what keeps Node.js family-agnostic in the same way the worker is.
+   */
+  readonly families: FamilyRegistry;
   /** Resolved device: `"wasm"`, `"webgpu"`, or `"cpu"` under `onnxruntime-node`. */
   readonly device: string;
   readonly dtype: ResolvedDtype;
   /** Worker factory; `undefined` runs inference in-thread. */
   readonly createWorker?: (() => Worker) | undefined;
-  /** In-thread loader, required only when {@link createWorker} is absent. */
-  readonly inThreadLoader?:
-    | ((
-        options: {
-          readonly modelId: string;
-          readonly revision: string;
-          readonly device: string;
-          readonly dtype: string;
-          readonly voiceSha256?: string | undefined;
-          readonly onProgress: (event: ProgressResponse["event"]) => void;
-        },
-        voice: string,
-      ) => Promise<LoadedPhonon>)
-    | undefined;
   /** Filesystem cache probe, used where Cache Storage does not exist. */
   readonly fsProbe?: FsProbe | undefined;
   /**
@@ -131,7 +110,7 @@ export interface TransformersEngineOptions {
    *
    * The worker protocol has always accepted a temperature; without this option a caller had no way
    * to set it, so the documented "`temperature: 0` makes generation deterministic" was unreachable
-   * through the public API. `undefined` keeps the model's own `phonon.temperature`.
+   * through the public API. `undefined` keeps the model's own value.
    */
   readonly temperature?: number | undefined;
   /**
@@ -147,19 +126,22 @@ export interface TransformersEngineOptions {
 }
 
 /**
- * Engine backed by the Phonon worker.
+ * Engine backed by a model runner in a worker.
  *
  * `supports()` and `voices()` are synchronous and side-effect free, `load()` is single-flight
  * per model + voice, and every operation re-checks disposal and abort after each `await`.
+ *
+ * Everything model-specific comes from the manifests and the family registry: the engine never
+ * names a family, a voice, a language, or a file convention.
  */
 export class TransformersEngine implements TtsEngine {
   readonly id = ENGINE_ID;
 
   readonly #registry: EngineRegistry;
+  readonly #families: FamilyRegistry;
   readonly #device: string;
   readonly #dtype: ResolvedDtype;
   readonly #createWorker: (() => Worker) | undefined;
-  readonly #inThreadLoader: TransformersEngineOptions["inThreadLoader"];
   readonly #fsProbe: FsProbe | undefined;
   readonly #fallbackFrom: string | undefined;
   readonly #fallbackReason: string | undefined;
@@ -180,10 +162,10 @@ export class TransformersEngine implements TtsEngine {
 
   constructor(options: TransformersEngineOptions) {
     this.#registry = options.registry;
+    this.#families = options.families;
     this.#device = options.device;
     this.#dtype = options.dtype;
     this.#createWorker = options.createWorker;
-    this.#inThreadLoader = options.inThreadLoader;
     this.#fsProbe = options.fsProbe;
     this.#fallbackFrom = options.fallbackFrom;
     this.#fallbackReason = options.fallbackReason;
@@ -198,34 +180,28 @@ export class TransformersEngine implements TtsEngine {
   }
 
   /**
-   * Voices of the configured model.
+   * Voices of every configured model.
    *
    * A voice the model does not ship is absent here, so `createTts()` rejects it with
-   * `VOICE_NOT_SUPPORTED` up front instead of failing at synthesis time.
+   * `VOICE_NOT_SUPPORTED` up front instead of failing at synthesis time. Names, genders, and
+   * accents come from the manifests, so a new model or language needs no engine change.
    */
   voices(): readonly VoiceInfo[] {
-    const model = this.#registry.model("en");
-    if (!model) {
-      return [];
-    }
-    return this.#registry.voices(model).map((voice) => {
-      const accent = voiceAccent(voice.id);
-      const license = voice.license ?? "unknown";
-      return {
-        id: voice.id,
-        language: voice.language,
-        ...(voice.sampleRate !== undefined && { sampleRate: voice.sampleRate }),
-        ...(PHONON_VOICE_NAMES[voice.id] !== undefined && {
-          name: PHONON_VOICE_NAMES[voice.id],
-        }),
-        ...(PHONON_VOICE_GENDERS[voice.id] !== undefined && {
-          gender: PHONON_VOICE_GENDERS[voice.id],
-        }),
-        ...(accent !== undefined
-          ? { description: `Accent ${accent}; license ${license}` }
-          : { description: `License: ${license}` }),
-      };
-    });
+    return this.#registry.models().flatMap((model) =>
+      this.#registry.voices(model).map((voice) => {
+        const description =
+          voice.description ??
+          (voice.license === undefined ? undefined : `License: ${voice.license}`);
+        return {
+          id: voice.id,
+          language: voice.language,
+          ...(voice.name !== undefined && { name: voice.name }),
+          ...(voice.gender !== undefined && { gender: voice.gender }),
+          ...(voice.sampleRate !== undefined && { sampleRate: voice.sampleRate }),
+          ...(description !== undefined && { description }),
+        };
+      }),
+    );
   }
 
   /** Resolved capabilities, or `undefined` before the first successful load. */
@@ -267,18 +243,20 @@ export class TransformersEngine implements TtsEngine {
     this.#assertNotDisposed();
     const model = this.#requireModel(request);
     const voice = this.#resolveVoice(model, request);
-    const files = this.#manifestFiles(model, voice);
-    const urls = files.map((file) => this.#url(model, file.path));
+    const assets = this.#assets(model, voice);
+    const urls = assets.map((asset) => asset.url);
     const states = await this.#cacheStates(urls);
-    const planFiles: AssetPlanFile[] = files.map((file, index) => {
+    const planFiles: AssetPlanFile[] = assets.map((asset, index) => {
       const state = states[index];
+      const { file } = asset;
       return {
         path: file.path,
-        role: file.path.startsWith("voices/") ? "voice" : "model",
+        role: asset.role,
         cached: state?.cached ?? false,
-        url: urls[index] ?? this.#url(model, file.path),
+        url: asset.url,
         ...(file.size !== undefined && { size: file.size }),
         ...(file.sha256 !== undefined && { sha256: file.sha256 }),
+        ...(file.variant !== undefined && { variant: file.variant }),
         ...(state?.size !== undefined && { cachedSize: state.size }),
       };
     });
@@ -415,7 +393,7 @@ export class TransformersEngine implements TtsEngine {
     this.#assertNotDisposed();
     const model = this.#requireModel(request);
     const voice = this.#resolveVoice(model, request);
-    const urls = this.#manifestFiles(model, voice).map((file) => this.#url(model, file.path));
+    const urls = this.#assets(model, voice).map((asset) => asset.url);
     if (this.#loaded?.model.id === model.id) {
       await this.#disposeLoaded();
     }
@@ -500,6 +478,7 @@ export class TransformersEngine implements TtsEngine {
 
     let sampleRate = model.sampleRate ?? 24_000;
     let streaming: StreamingClass = "incremental-frames";
+    const voiceAsset = voice === undefined ? undefined : this.#voiceFile(voice);
     try {
       const response = await this.#request(
         {
@@ -507,13 +486,16 @@ export class TransformersEngine implements TtsEngine {
           id: this.#nextId(),
           modelId: model.id,
           revision: model.revision,
+          family: model.family ?? "phonon",
           device: this.#device,
           dtype: this.#dtype,
-          ...(voice !== undefined && { voice: voice.id }),
-          ...(voice?.files.find((file) => file.sha256 !== undefined)?.sha256 !== undefined && {
-            voiceSha256: voice.files.find((file) => file.sha256 !== undefined)!.sha256!,
+          language: voice?.language ?? this.#registry.languages()[0] ?? "en",
+          ...(voice !== undefined && {
+            voice: voice.id,
+            voicePath: voiceAsset?.path ?? `voices/${voice.id}.bin`,
           }),
-          ...(model.family !== undefined && { profile: model.family }),
+          ...(voice?.revision !== undefined && { voiceRevision: voice.revision }),
+          ...(voiceAsset?.sha256 !== undefined && { voiceSha256: voiceAsset.sha256 }),
         },
         undefined,
         (event) => {
@@ -573,7 +555,9 @@ export class TransformersEngine implements TtsEngine {
     }
     const message = error instanceof Error ? error.message : String(error);
     const cause = isTtsError(error) ? (error.cause ?? error) : error;
-    if (/does not declare a "phonon"|Unsupported dtype|already hosts/i.test(message)) {
+    if (
+      /does not declare a "|No runner is registered|Unsupported dtype|already hosts/i.test(message)
+    ) {
       return new TtsError(TTS_ERROR_CODES.MODEL_NOT_AVAILABLE, message, { cause });
     }
     if (isOfflineError(message)) {
@@ -943,15 +927,7 @@ export class TransformersEngine implements TtsEngine {
   /** The in-thread host, used where `Worker` does not exist. */
   #ensureHost(): ModelHost {
     this.#host ??= createModelHost({
-      load: (options, voice) => {
-        if (!this.#inThreadLoader) {
-          throw new TtsError(
-            TTS_ERROR_CODES.NOT_SUPPORTED,
-            "In-thread inference was selected but no loader was provided",
-          );
-        }
-        return this.#inThreadLoader(options, voice);
-      },
+      families: this.#families,
       // In-thread there is no separate thread to answer `cache-check`; the filesystem probe
       // answers instead, so the worker-side cache inspection is unreachable here.
       post: (response) => {
@@ -1167,45 +1143,108 @@ export class TransformersEngine implements TtsEngine {
       throw new TtsError(
         TTS_ERROR_CODES.LANGUAGE_NOT_SUPPORTED,
         `No model is registered for language ${request.language}`,
-        { details: { language: request.language } },
+        {
+          details: {
+            language: request.language,
+            supported: this.#registry.languages(),
+          },
+        },
       );
     }
     return model;
   }
 
-  /** The voice a request resolves to; an unknown voice is rejected, never ignored. */
+  /**
+   * Resolves a request to its voice manifest.
+   *
+   * An unknown *voice id* is rejected; a voice that a model does not declare at all is not an
+   * error, because a voice-less manifest is legitimate for a family whose single speaker is
+   * built into the weights. `createTts()` has already rejected an id the engine never listed.
+   *
+   * With several models registered, the same list is flat while resolution is per model, so a
+   * voice id that belongs to another language's model is rejected here rather than silently
+   * substituted. The message names the model that *does* ship it, because "pass the language
+   * too" is the fix.
+   */
   #resolveVoice(model: ModelManifest, request: TtsRequest): VoiceManifest | undefined {
     const voice = this.#registry.voice(model, request.voice);
     if (voice === undefined && request.voice !== undefined) {
+      const elsewhere = this.#registry
+        .models()
+        .find((candidate) => this.#registry.voice(candidate, request.voice) !== undefined);
       throw new TtsError(
         TTS_ERROR_CODES.VOICE_NOT_SUPPORTED,
-        `Model ${model.id} does not ship voice ${request.voice}`,
-        { details: { modelId: model.id, voice: request.voice } },
+        `Model ${model.id} does not ship voice ${request.voice}` +
+          (elsewhere === undefined
+            ? ""
+            : `; it belongs to ${elsewhere.id} — pass the language that model serves`),
+        {
+          details: {
+            modelId: model.id,
+            voice: request.voice,
+            voices: this.#registry.voices(model).map((candidate) => candidate.id),
+            ...(elsewhere !== undefined && { otherModel: elsewhere.id }),
+          },
+        },
       );
     }
     return voice;
   }
 
-  /** The absolute URL of one manifest file at the model's pinned revision. */
+  /** The absolute URL of one model file at the model's pinned revision. */
   #url(model: ModelManifest, path: string): string {
-    return assetUrl(model.id, model.revision, path);
+    return assetUrl(this.#registry.repository(model), model.revision, path);
   }
 
   /**
-   * Every manifest file of a model + voice pair that the resolved dtype actually uses.
+   * The one asset file of a voice.
    *
-   * A manifest lists every variant so the core can price any of them; the engine reports only
-   * the files its resolved dtype loads, otherwise `isCached()` would demand weights that are
-   * never read and `removeModel()` would delete weights belonging to another configuration.
+   * A voice is addressed by the manifest, not by the engine: a family may keep its embedding
+   * under any path in any repository. The first file is the voice asset by contract, and a voice
+   * without files is a manifest error rather than a silent "use the model's default".
    */
-  #manifestFiles(model: ModelManifest, voice: VoiceManifest | undefined): readonly AssetFile[] {
-    const suffix = DTYPE_SUFFIX[this.#dtype];
-    return [...model.files, ...(voice?.files ?? [])].filter((file) => {
-      if (!file.path.startsWith("onnx/")) {
-        return true;
-      }
-      return onnxVariant(file.path.slice("onnx/".length)) === suffix;
-    });
+  #voiceFile(voice: VoiceManifest): AssetFile {
+    const file = voice.files[0];
+    if (file === undefined) {
+      throw new TtsError(
+        TTS_ERROR_CODES.MODEL_NOT_AVAILABLE,
+        `Voice ${voice.id} of model ${voice.modelId} declares no files`,
+        { details: { voice: voice.id, modelId: voice.modelId } },
+      );
+    }
+    return file;
+  }
+
+  /**
+   * The resolved plan of one model + voice: which files, which role, which absolute URL.
+   *
+   * A voice asset is addressed by *its* manifest — repository, revision, path — not by the
+   * model's, so a family may keep embeddings in a separate voice pack. Resolving it once here
+   * is what keeps `describeAssets()`, `removeModel()`, and `prepare()` from disagreeing about
+   * which cache key a voice has.
+   */
+  #assets(
+    model: ModelManifest,
+    voice: VoiceManifest | undefined,
+  ): readonly { readonly file: AssetFile; readonly role: AssetRole; readonly url: string }[] {
+    const modelFiles = selectVariantFiles(model.files, this.#dtype).map((file) => ({
+      file,
+      role: "model" as const,
+      url: this.#url(model, file.path),
+    }));
+    if (voice === undefined) {
+      return modelFiles;
+    }
+    const voiceRepository = voice.modelId;
+    const voiceRevision = voice.revision ?? model.revision;
+    return [
+      ...modelFiles,
+      ...voice.files.map((file) => ({
+        file,
+        role: "voice" as const,
+        url: assetUrl(voiceRepository, voiceRevision, file.path),
+      })),
+    ];
   }
 
   /** Per-file cache state, from Cache Storage when available and the filesystem otherwise. */
@@ -1246,9 +1285,6 @@ export class TransformersEngine implements TtsEngine {
   }
 }
 
-/** ONNX variant suffixes a manifest may use, longest first so `_q4f16` wins over `_q4`. */
-const ONNX_VARIANTS = ["_q4f16", "_q4", "_fp16", ""] as const;
-
 /**
  * Worker error codes the engine translates itself.
  *
@@ -1263,21 +1299,6 @@ const KNOWN_WORKER_CODES: ReadonlyMap<string, TtsErrorCode> = new Map([
   [TTS_ERROR_CODES.ABORTED, TTS_ERROR_CODES.ABORTED],
   [TTS_ERROR_CODES.ASSET_INTEGRITY_FAILED, TTS_ERROR_CODES.ASSET_INTEGRITY_FAILED],
 ]);
-
-/**
- * The dtype variant an ONNX manifest path belongs to, e.g. `"_q4"` for `flow_lm_q4.onnx_data`.
- *
- * Longest suffix first, so `_q4f16` is never mistaken for `_q4`, and an external-weight `_data`
- * chunk is attributed to the graph it accompanies rather than treated as unsuffixed.
- */
-function onnxVariant(stem: string): string {
-  const base = stem.endsWith(".onnx_data")
-    ? stem.slice(0, -".onnx_data".length)
-    : stem.endsWith(".onnx")
-      ? stem.slice(0, -".onnx".length)
-      : stem;
-  return ONNX_VARIANTS.find((candidate) => candidate !== "" && base.endsWith(candidate)) ?? "";
-}
 
 /**
  * Reads per-URL state out of every Cache Storage cache.

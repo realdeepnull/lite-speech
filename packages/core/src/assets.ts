@@ -1,4 +1,5 @@
 import { TTS_ERROR_CODES, TtsError } from "./errors.js";
+import type { LanguageCode } from "./types.js";
 
 /**
  * Declarative description of the files a model needs.
@@ -16,9 +17,25 @@ export interface AssetFile {
   readonly sha256?: string;
   /** Resolved absolute URL, when the engine already resolved one. */
   readonly url?: string;
+  /**
+   * Name of the build variant this file belongs to, e.g. `"q4"` or `"fp32"`.
+   *
+   * A file **without** a variant is required by every configuration (configs,
+   * tokenizers, voice embeddings). A manifest may therefore list every variant
+   * of its weights, and an engine selects the files that match the dtype it
+   * resolved — which is what lets `estimateDownload()` price any of them
+   * without knowing a single file-name convention.
+   */
+  readonly variant?: string;
 }
 
-/** A pinned model revision and the files it consists of. */
+/**
+ * A pinned model revision and the files it consists of.
+ *
+ * A manifest is data, not code: it says what to download and which model family
+ * runs it, never how to run it. That is why several families can share one
+ * registry and one engine.
+ */
 export interface ModelManifest {
   /** Model identifier, e.g. `"onnx-community/phonon-31m-en-ONNX"`. */
   readonly id: string;
@@ -26,8 +43,17 @@ export interface ModelManifest {
   readonly revision: string;
   /** License of the weights, e.g. `"Apache-2.0"`. */
   readonly license?: string;
-  /** Model family, e.g. `"phonon"`. */
+  /** Model family, e.g. `"phonon"`. Selects the profile and the runner. */
   readonly family?: string;
+  /**
+   * Languages this model is registered for, e.g. `["en"]` or `["en", "de"]`.
+   *
+   * An engine may derive the list from the model's voices when it is omitted,
+   * so a hand-written manifest with a voice list still resolves. Declaring it is
+   * how a multilingual model is registered under more than one language without
+   * pretending its voices switch language.
+   */
+  readonly languages?: readonly LanguageCode[];
   /** Native output sample rate in Hz. */
   readonly sampleRate?: number;
   readonly files: readonly AssetFile[];
@@ -37,15 +63,26 @@ export interface ModelManifest {
 export interface VoiceManifest {
   /** Voice identifier passed to `createTts({ voice })`. */
   readonly id: string;
-  /** Model this voice belongs to. */
+  /**
+   * Repository this voice belongs to.
+   *
+   * Usually the model repository, but a family whose voices live elsewhere (a
+   * shared voice pack, for instance) can point at its own.
+   */
   readonly modelId: string;
-  readonly language: string;
+  readonly language: LanguageCode;
   /** Immutable revision of the voice repository (commit SHA). */
   readonly revision?: string;
   /** License of the voice assets. */
   readonly license?: string;
   /** Native sample rate in Hz, when different from the model. */
   readonly sampleRate?: number;
+  /** Human-readable name for UI. Presentation data belongs here, not in engine code. */
+  readonly name?: string;
+  /** Optional gender hint for UI (`"female"`, `"male"`, …). */
+  readonly gender?: string;
+  /** Free-form note, e.g. the accent of a recording or a quality caveat. */
+  readonly description?: string;
   readonly files: readonly AssetFile[];
 }
 

@@ -39,7 +39,11 @@ function createHost(options: Parameters<typeof createFakeLoader>[0] = {}): {
 } {
   const recorder = createRecorder();
   const loader = createFakeLoader(options);
-  const host = createModelHost({ load: loader.load, post: recorder.post, now: () => 0 });
+  const host = createModelHost({
+    families: loader.families,
+    post: recorder.post,
+    now: () => 0,
+  });
   return { host, recorder, loader };
 }
 
@@ -48,8 +52,10 @@ const LOAD = {
   id: 1,
   modelId: "onnx-community/phonon-31m-en-ONNX",
   revision: "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4",
+  family: "phonon",
   device: "cpu",
   dtype: "fp32",
+  language: "en",
   voice: "default",
 };
 
@@ -98,13 +104,15 @@ describe("model host", () => {
     const recorder = createRecorder();
     let attempts = 0;
     const host = createModelHost({
-      load: async (options, voice) => {
-        attempts += 1;
-        if (attempts === 1) {
-          throw new Error("network down");
-        }
-        const { load } = createFakeLoader();
-        return load(options, voice);
+      families: {
+        phonon: async (options) => {
+          attempts += 1;
+          if (attempts === 1) {
+            throw new Error("network down");
+          }
+          const { families } = createFakeLoader();
+          return families["phonon"]!(options);
+        },
       },
       post: recorder.post,
     });
@@ -113,6 +121,15 @@ describe("model host", () => {
     await host.dispatch({ ...LOAD, id: 2 });
     expect(attempts).toBe(2);
     expect(recorder.ofKind("loaded")).toHaveLength(1);
+  });
+
+  it("reports an unregistered family as an explicit error", async () => {
+    const recorder = createRecorder();
+    const host = createModelHost({ families: {}, post: recorder.post });
+    await host.dispatch({ ...LOAD, family: "no-such-family" });
+    const errors = recorder.ofKind("error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toMatch(/No runner is registered for model family/);
   });
 
   it("synthesizes into one transferred result", async () => {
@@ -221,7 +238,7 @@ describe("model host", () => {
     const recorder = createRecorder();
     const stored = new Set(["https://huggingface.co/m/r/resolve/rev/config.json"]);
     const host = createModelHost({
-      load: createFakeLoader().load,
+      families: createFakeLoader().families,
       post: recorder.post,
       openCache: async () => ({
         match: async (url: string) =>

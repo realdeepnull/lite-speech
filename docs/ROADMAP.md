@@ -2,9 +2,10 @@
 
 > **Status:** M0 (repository and toolchain foundation), M1 (inference spike),
 > M2 (`@lite-speech/core` MVP), M3 (ONNX engine MVP), M4 (assets,
-> offline policy, provisioning), and M5 (measurement) implemented; M6 is next.
+> offline policy, provisioning), M5 (measurement), and M6 (modular models and
+> languages) implemented; M7 is next.
 > Milestones below keep their checklist state.
-> **Date:** October 31, 2026
+> **Date:** November 1, 2026
 > **Target:** First public release `0.1.0` of `@lite-speech/core` and
 > `@lite-speech/engine-onnx`.
 > **Related:** [lite-speech-concept.md](./lite-speech-concept.md) ·
@@ -24,7 +25,7 @@
   gate needs it, and not earlier (see
   [§5](#5-tooling-adoption-plan)).
 - Checklist items are intended to become GitHub issues grouped by milestone
-  label (`m0-foundation` … `m6-beta`).
+  label (`m0-foundation` … `m7-beta`).
 
 ## 2. Principles shaping the plan
 
@@ -41,19 +42,24 @@
 6. **Boring, proven library tooling.** ESM-only, strict TypeScript, `tsdown`
    builds, Vitest tests, published packages validated by `publint`,
    Are the Types Wrong, `knip`, and `size-limit`.
+7. **Models and languages are data, not code.** After M6, adding a model family,
+   a checkpoint, or a language is a manifest plus (at most) a runner entry — never
+   an engine, worker-protocol, or core change. Anything that requires editing the
+   engine to add a model is a design defect, not a feature request.
 
 ## 3. Milestones at a glance
 
-| ID  | Theme                 | Primary outcome                                                     | Exit gate                                                           |
-| --- | --------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| M0  | Foundation            | Workspace, package skeletons, toolchain, CI skeleton                | `build`, `typecheck`, `lint`, `format:check`, `test` green on stubs |
-| M1  | Inference spike       | Pinned Transformers.js produces Phonon 31M EN audio without hacks   | Reproducible audio in Node + Chromium, limitations documented       |
-| M2  | Core MVP              | `@lite-speech/core`: contract, lifecycle, streaming, offline policy | Fake-engine suite green, zero runtime deps, size budget met         |
-| M3  | ONNX engine MVP       | `@lite-speech/engine-onnx`: worker engine, one verified profile     | Browser integration suite and cancellation tests green              |
-| M4  | Assets & provisioning | Declarative manifests, `prepare()`, cache inspection and eviction   | Strict-offline end-to-end run succeeds with network blocked         |
-| M5  | Measurement           | Benchmark and quality harness, published performance report         | Latency, RTF, RAM, and size recorded per profile and device         |
-| M6  | Beta `0.1.0`          | Docs, examples, package validation, first published release         | `pack:check` green, release published via Trusted Publishing        |
-| M7  | Beyond 1.0            | More models, languages, engines; optional provisioning CLI          | Additions require no breaking change to the core API                |
+| ID  | Theme                      | Primary outcome                                                       | Exit gate                                                           |
+| --- | -------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| M0  | Foundation                 | Workspace, package skeletons, toolchain, CI skeleton                  | `build`, `typecheck`, `lint`, `format:check`, `test` green on stubs |
+| M1  | Inference spike            | Pinned Transformers.js produces Phonon 31M EN audio without hacks     | Reproducible audio in Node + Chromium, limitations documented       |
+| M2  | Core MVP                   | `@lite-speech/core`: contract, lifecycle, streaming, offline policy   | Fake-engine suite green, zero runtime deps, size budget met         |
+| M3  | ONNX engine MVP            | `@lite-speech/engine-onnx`: worker engine, one verified profile       | Browser integration suite and cancellation tests green              |
+| M4  | Assets & provisioning      | Declarative manifests, `prepare()`, cache inspection and eviction     | Strict-offline end-to-end run succeeds with network blocked         |
+| M5  | Measurement                | Benchmark and quality harness, published performance report           | Latency, RTF, RAM, and size recorded per profile and device         |
+| M6  | Modular models & languages | Catalogue/family seams: many models, many languages, no engine change | A second language and a second family run from manifests alone      |
+| M7  | Beta `0.1.0`               | Docs, examples, package validation, first published release           | `pack:check` green, release published via Trusted Publishing        |
+| M8  | Beyond 1.0                 | Additional families, engines, provisioning CLI, framework wrappers    | Additions require no breaking change to the core API                |
 
 ---
 
@@ -92,7 +98,7 @@ automatically, even before the first library code exists.
 - [x] `README.md` with the positioning statement, install instructions, and a
       pointer to the docs.
 - [ ] Confirm the npm scope (`@lite-speech` is a proposal) or record the final
-      scope before M6. _Status: the scope is currently unclaimed on the public
+      scope before M7. _Status: the scope is currently unclaimed on the public
       registry (`404` for both package names), which means it is available but
       not yet owned; claim it and close D4 before the first publish._
 
@@ -102,7 +108,7 @@ automatically, even before the first library code exists.
       succeed on the skeletons, locally and in CI.
 - [x] No package has a runtime dependency yet. The root `knip` script runs and is
       clean; `size` and `pack:check` are already wired as root scripts but stay
-      no-ops until a package defines them (M2/M6), which is exactly how the
+      no-ops until a package defines them (M2/M7), which is exactly how the
       just-in-time tooling rule is enforced.
 
 ---
@@ -209,6 +215,7 @@ contract.
 
 - [x] `create-onnx-engine.ts` — factory with `models`, `registry`, and
       `profiles` overrides; `device`/`dtype` application.
+      _`profiles` became `families` in M6; see [M6](#m6--modular-models-and-languages)._
 - [x] `transformers-engine.ts` — `TtsEngine` implementation: worker lifecycle,
       `id`-correlated pending map, abort handling, cache checks, error mapping.
 - [x] `worker.ts` — single model per worker, serialized message queue,
@@ -216,6 +223,8 @@ contract.
       `dispose` that always acknowledges.
 - [x] `profiles.ts` — `ModelProfile` seam resolved from `metadata.profile`, with
       the first Phonon profile and its frame handling.
+      _Superseded in M6: split into `families.ts` (the seam), `phonon-profile.ts` (the pure
+      rules), and `runners.ts` (the family registry), with `family` replacing `metadata.profile`._
 - [x] `models.ts` — declarative model **and voice** registry with pinned
       revisions, sizes, hashes, and `license`.
 - [x] `webgpu.ts` — memoized adapter probe, `resolveDeviceDtype()`, no silent
@@ -415,7 +424,93 @@ than a fake, since the defect is in the dependency, not in this repository.
 
 ---
 
-### M6 — Documentation, examples, and `0.1.0` beta
+### M6 — Modular models and languages
+
+**Goal:** make "another model" and "another language" configuration instead of a code change,
+and prove it with a second language and a second family that run through the unchanged engine.
+
+**Why before the beta.** The beta is the release that tells users what this library _is_. If the
+answer is "one English checkpoint, hard-coded", then every later model is a breaking redesign of
+the packages people already installed. The seams are cheap now and expensive after `0.1.0`.
+
+**Deliverables**
+
+- [x] Split the engine into four seams with one responsibility each:
+      `catalog.ts` (model/voice lookup and asset URLs — pure data),
+      `models.ts` (the built-in catalogue: what ships),
+      `families.ts` (`ModelProfile` + `ModelRunner` + `FamilyRegistry` — how a family is
+      described and invoked), and `phonon-profile.ts` / `phonon.ts` (one family's rules and its
+      graph driving).
+- [x] `ModelManifest.family` selects the _runner_, not a hard-coded profile id. An unknown family
+      is an explicit error naming the known ones, never a silent Phonon fallback.
+- [x] `ModelManifest.languages` declares which languages a model serves. Omitted, it is derived
+      from the model's voices, so a hand-written manifest stays valid.
+- [x] Language resolution accepts a primary-subtag match (`de-AT` → `de`), with an exact match
+      winning. `supports()` and the model lookup agree, because both go through the registry.
+- [x] `AssetFile.variant` labels a build per file, so the engine selects the weights for the
+      resolved dtype by declaration. The ONNX file-name heuristic is only a fallback for a
+      hand-written manifest — a family may name its weights anything.
+- [x] A voice is addressed by its own manifest (`modelId` + `revision` + first file path), not by
+      a path the engine composes. A family may keep embeddings in a separate repository or under
+      an arbitrary path.
+- [x] Voice presentation data (`name`, `gender`, `description`) lives in the manifest. The engine
+      holds no voice table, so a new voice needs no code.
+- [x] The worker protocol carries `family`, `language`, and the voice's repository/revision/path;
+      nothing in it names a model.
+- [x] `createOnnxEngine({ models, voices, registry, families })`: an application (or a mirror)
+      registers its own catalogue without a new package.
+- [x] Core selects a voice of the requested language instead of the first registered voice, so a
+      multi-language registry cannot hand a German request an English voice.
+- [x] Tests: a second language and a second family run from manifests plus a registry entry, and
+      the built-in catalogue still resolves exactly as before.
+- [x] `docs/adding-a-model.md`: the recipe — manifest, voice manifests, family, and the tests that
+      prove each step.
+
+**Tooling added:** none. The seams are types, data, and one extra lookup layer; the existing
+Vitest suites cover them.
+
+**Exit gate**
+
+- A German-model manifest and a second family both run through `createTts()` without editing the
+  engine, the worker protocol, or `@lite-speech/core`. _Verified by
+  `tests/families.test.ts` ("registers a second language without touching the registry
+  implementation", "runs a second family through the same registry without an engine change") and
+  by the engine suite, which drives an in-thread engine whose family registry is a fake._
+- `createOnnxEngine` accepts arbitrary manifests and rejects an unregistered family with a message
+  that names the available ones.
+- The engine's main bundle still contains no Transformers.js: the model runtime remains reachable
+  only through the `./worker` export. _Measured: 11.66 kB gzipped for the engine entry, against an
+  unchanged 30 kB budget._
+- Existing behaviour is unchanged: the same English Phonon profile, the same three dtypes, the same
+  pinned bytes, and the same streaming classification.
+
+**Outcome.** Adding a model or a language is now four independent decisions that cannot drift
+apart, because each is read from exactly one place in the manifest:
+
+1. **Which runner.** `family` names a factory. `families.ts` maps the name; `runners.ts` is the only
+   module that binds a name to an implementation.
+2. **Which weights.** `variant` on each file, resolved against the dtype the device policy chose.
+   Pricing and running therefore select the same set without a file-name convention.
+3. **Which language.** `languages` on the model, resolved with a primary-subtag fallback. A voice
+   still reports the language it actually speaks, so `supports("en-GB")` never implies that this
+   profile switches accent.
+4. **Which voice bytes.** The voice manifest's own repository, revision, and path, so an embedding
+   can live anywhere without being special-cased in the engine.
+
+Two consequences are worth stating because they are easy to get wrong later. First, a voice is
+still _one_ asset by contract; a family whose speakers need several files needs that contract
+extended deliberately, not by appending files and hoping the first one is right. Second, the
+language fallback is selection, not capability: the engine will accept `de-AT` for a German model
+because it is the same model and the same audio, but it will not accept `de` for an English one,
+and nothing pretends the model speaks a language it was never registered for.
+
+The catalogue also stopped being a function of convenience. `createDefaultRegistry()` still exists
+and still returns the built-in catalogue, but it is now one line over `createRegistry()`, so there
+is no second code path that could resolve a language differently from a user-supplied catalogue.
+
+---
+
+### M7 — Documentation, examples, and `0.1.0` beta
 
 **Goal:** a publishable, consumable release validated the way a user installs it.
 
@@ -424,18 +519,19 @@ than a fake, since the defect is in the dependency, not in this repository.
 - [ ] `README.md` per package: pitch, install, quick start, offline provisioning,
       limitations, license of models used.
 - [ ] `docs/api.md` generated or hand-written reference for the public surface.
-- [ ] `docs/model-profiles.md`: per-profile size, license, streaming class,
+- [ ] `docs/model-profiles.md`: per-model size, license, streaming class,
       supported runtimes, and known limitations.
+- [x] `docs/adding-a-model.md`: the M6 recipe — manifest, voice manifests, family, and the tests
+      that prove each step.
 - [ ] Examples: one Node.js and one browser sample on the **same** core API, plus
       a bundler-free demo against the built ESM output.
-- [ ] Changesets configured; `CHANGELOG.md` seeded.
 - [ ] Release workflow: `npm publish` via **npm Trusted Publishing (OIDC)**, no
       long-lived tokens, provenance enabled, `publishConfig.provenance` where
       supported.
 - [ ] Migration/troubleshooting notes covering worker setup, CSP, and
       `env.allowLocalModels` pitfalls.
 
-**Tooling added:** `publint`, `@arethetypeswrong/cli`, `@changesets/cli`, packed
+**Tooling added:** `publint`, `@arethetypeswrong/cli` packed
 tarball install smoke test (`npm pack` → install into a scratch project → run
 the example).
 
@@ -451,20 +547,24 @@ the example).
 
 ---
 
-### M7 — Beyond `0.1.0`
+### M8 — Beyond `0.1.0`
 
 Only after the beta has produced real-world feedback.
 
-- [ ] German Phonon support **if** an independently verified, legally usable
-      ONNX export exists and quality passes the M5 corpus.
-- [ ] Multilingual profile under the same rules; no gated weights shipped.
+- [ ] Register the first non-English model — a German Phonon (or another family) **if** an
+      independently verified, legally usable ONNX export exists and it passes the M5 corpus.
+      _The mechanism is M6's; this is the content._
+- [ ] Register a genuinely multilingual checkpoint, where one model serves several languages, and
+      document the difference from "several models, one per language".
+- [ ] A family whose runner needs a public Transformers.js pipeline (`text-to-speech`), as a
+      second entry in `runners.ts`.
+- [ ] Richer text normalization (numbers, dates, currency, abbreviations), opt-in, per language,
+      and testable in isolation.
 - [ ] Genuinely incremental synthesis to lower time-to-first-audio, where the
       runtime can support it.
-- [ ] Richer text normalization (numbers, dates, currency, abbreviations),
-      opt-in and testable in isolation.
 - [ ] Integration with streamed LLM text (incremental sentence feeding).
-- [ ] Additional engines (`engine-transformers`, other model families) as new
-      packages behind the unchanged contract.
+- [ ] Additional engines (`engine-transformers`, other runtimes) as new packages behind the
+      unchanged contract.
 - [ ] Optional provisioning CLI and a framework wrapper, neither required by
       core.
 - [ ] Evaluate Oxlint/Biome or a faster type checker **only** if CI time becomes
@@ -485,9 +585,8 @@ orientation, not a wishlist. Each tool is introduced when a gate depends on it.
 | `knip`                          | M2        | Prevents orphaned exports and dependencies as the API grows |
 | `size-limit`                    | M2        | Guards the "core stays tiny" promise from day one           |
 | `vitest` browser + `playwright` | M3        | Workers, Cache Storage, and WebGPU have no Node equivalent  |
-| `publint`                       | M6        | Validates the actual npm artifact before publishing         |
-| `@arethetypeswrong/cli`         | M6        | Catches broken type resolution across module resolutions    |
-| `@changesets/cli`               | M6        | Semantic versioning, changelogs, and coordinated releases   |
+| `publint`                       | M7        | Validates the actual npm artifact before publishing         |
+| `@arethetypeswrong/cli`         | M7        | Catches broken type resolution across module resolutions    |
 
 **Deliberately deferred**
 
@@ -495,7 +594,7 @@ orientation, not a wishlist. Each tool is introduced when a gate depends on it.
   of bugs; a small request/response protocol keeps the bundle smaller.
 - `idb` / `idb-keyval` — only once IndexedDB is genuinely needed; Cache Storage
   covers model assets for the MVP.
-- `typedoc` — optional for M6; hand-written API docs are acceptable for two
+- `typedoc` — optional for M7; hand-written API docs are acceptable for two
   packages and a small surface.
 - Oxlint, Biome, Bun, or alternative bundlers — no second tool solving an
   already-solved problem during the MVP.
@@ -531,7 +630,7 @@ remote assets resolved through the manifest.
 
 **Release**
 
-1. Changesets version bump and changelog.
+1. Version bump and changelog.
 2. Full validation sequence, plus `publint` and Are the Types Wrong.
 3. `npm pack --dry-run`, then publish through OIDC Trusted Publishing with
    provenance.
@@ -540,7 +639,7 @@ remote assets resolved through the manifest.
 
 ## 7. Versioning and release strategy
 
-- `0.0.x` milestones stay private/experimental until the M6 gate.
+- `0.0.x` milestones stay private/experimental until the M7 gate.
 - `0.1.0` is the first public beta; pre-1.0 breaking changes are allowed but must
   be called out in the changelog.
 - `@lite-speech/core` and `@lite-speech/engine-onnx` are versioned
@@ -553,12 +652,12 @@ remote assets resolved through the manifest.
 
 ## 8. Definition of done for `0.1.0`
 
-- [ ] A pinned Phonon profile runs reproducibly in every officially supported
+- [ ] A pinned model runs reproducibly in every officially supported
       runtime with pinned dependency and model revisions.
 - [ ] A fully provisioned install synthesizes with network access disabled;
       missing assets fail with an actionable error.
 - [ ] Download size, memory envelope, streaming class, and license are documented
-      for the supported profile.
+      for every shipped model.
 - [ ] Streaming, cancellation, and disposal are covered by automated tests,
       including chunk ordering and partial-audio semantics.
 - [ ] The core public API leaks no engine types and is fully testable with a mock
@@ -566,6 +665,8 @@ remote assets resolved through the manifest.
 - [ ] Benchmark claims are reproducible from committed scripts and reports.
 - [ ] Published artifacts pass `publint`, Are the Types Wrong, and a packed
       tarball install test.
+- [ ] A model, a language, or a family can be registered through the documented
+      manifest API without editing the engine, and the tests prove it.
 
 ## 9. Decisions to close
 
@@ -574,9 +675,10 @@ remote assets resolved through the manifest.
 | D1  | Does `prepare()` ship in core at `0.1.0`, or is provisioning app-side?       | M4         |
 | D2  | Is one engine per instance enough, or is multi-engine fan-out required?      | M4         |
 | D3  | What is the minimum granularity we are willing to call "streaming" publicly? | M1         |
-| D4  | Final npm scope and package names (`@lite-speech/*` is provisional)          | M6         |
-| D5  | Default dtype per device/profile after measured quality comparison           | M5 → M6    |
+| D4  | Final npm scope and package names (`@lite-speech/*` is provisional)          | M7         |
+| D5  | Default dtype per device/model after measured quality comparison             | M5 → M7    |
 | D6  | Supported browser matrix and Node.js floor for `0.1.0`                       | M5         |
+| D7  | Which second model/language ships first, and does it need a new family?      | M7         |
 
 _Status of the M5 decisions._ D6 is closed by measurement (see
 [performance.md §7](./performance.md#7-decisions-closed-by-these-measurements)): Node.js 22/24/26
@@ -584,20 +686,25 @@ on `onnxruntime-node`, Chromium with WASM anywhere, WebGPU only where `requestAd
 D5 is **not** closed: the measured quality comparison turned out to be unusable — quantized and
 `fp32` graphs are reproducible individually but uncorrelated with each other, so waveform distance
 cannot rank them. D4 stays open because the scope can only be claimed on the registry, which is a
-release action, not a measurement.
+release action, not a measurement. D5 and D7 are now per-model questions rather than global ones:
+M6 made a model a manifest, so "which dtype is the default" and "which model ships next" are
+catalogue decisions that no longer wait for an engine release.
 
 ## 10. Risks and mitigations
 
-| Risk                                                 | Mitigation                                                                                         |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Pinned Transformers.js cannot run Phonon reliably    | M1 go/no-go gate; public APIs only; defer the feature rather than hide it behind a fallback        |
-| Non-commercial model licensing blocks adoption       | `license` in every manifest; document restrictions; never ship gated weights                       |
-| "Streaming" overstated in marketing docs             | Per-profile streaming classification plus measured time-to-first-audio                             |
-| WebGPU operator gaps produce wrong audio             | Operator/capability checks before use; `auto` may fall back with an event, explicit `webgpu` never |
-| Quantization quality regressions                     | Choose dtype by measured quality and performance, not by file size                                 |
-| Node.js differences (`Worker`, `Cache Storage`, GPU) | Adapter boundaries in the engine plus dedicated Node tests in CI                                   |
-| Scope creep toward a model catalog                   | One verified profile for the MVP; extend behind the unchanged contract                             |
-| Bundle growth in core                                | `size-limit` gate from M2, zero-runtime-dependency rule                                            |
+| Risk                                                 | Mitigation                                                                                           |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Pinned Transformers.js cannot run Phonon reliably    | M1 go/no-go gate; public APIs only; defer the feature rather than hide it behind a fallback          |
+| Non-commercial model licensing blocks adoption       | `license` in every manifest; document restrictions; never ship gated weights                         |
+| "Streaming" overstated in marketing docs             | Per-family streaming classification plus measured time-to-first-audio                                |
+| WebGPU operator gaps produce wrong audio             | Operator/capability checks before use; `auto` may fall back with an event, explicit `webgpu` never   |
+| Quantization quality regressions                     | Choose dtype by measured quality and performance, not by file size                                   |
+| Node.js differences (`Worker`, `Cache Storage`, GPU) | Adapter boundaries in the engine plus dedicated Node tests in CI                                     |
+| A model is added by editing the engine               | M6 seams: `family` selects a runner, `variant` selects weights, `languages` selects the model        |
+| A language is advertised but not spoken              | Voices report the language they actually speak; a fallback selects a model, it never claims one      |
+| Scope creep toward a model catalog                   | The _seams_ are in scope; curated content is not. Only measured, licensed, verified models are added |
+| Bundle growth in core                                | `size-limit` gate from M2, zero-runtime-dependency rule                                              |
+| Bundle growth in the engine entry                    | The model runtime stays behind `./worker`; `size-limit` guards the main entry                        |
 
 ## 11. Explicitly out of scope
 
@@ -605,12 +712,21 @@ Training or fine-tuning, voice cloning, built-in audio playback, a mandatory
 server, bundling model weights into the npm package, a hosted inference API, and
 any promise of commercial rights for non-commercial model families.
 
+A curated model _catalogue_ is also out of scope, and it is worth distinguishing from M6: the
+library ships the **seams** that let anyone register a model, a language, or a family, plus the
+small set of models the project has measured and licensed for itself. It does not aim to become a
+list of everything that runs on ONNX, because an unmeasured, unverified entry is a claim the
+project cannot keep.
+
 ## 12. Success signals
 
 - A developer goes from `npm install` to first audio in under ten minutes using
   only the README.
-- Time-to-first-audio is reported per profile and device, and users can predict
+- Time-to-first-audio is reported per model and device, and users can predict
   it from the docs.
 - No network request occurs without explicit provisioning consent.
 - `core` remains dependency-free and inside its size budget after `1.0`.
-- Adding a model family or an engine never requires a core API break.
+- Adding a model, a language, a family, or an engine never requires a core API break — and, for a
+  model or a language, never requires editing the engine either.
+- A user who registers their own mirror, checkpoint, or language gets the same offline, integrity,
+  and cancellation guarantees as the built-in one, because both paths are the same path.

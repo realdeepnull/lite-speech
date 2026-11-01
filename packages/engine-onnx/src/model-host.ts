@@ -4,11 +4,18 @@
  * Separating them keeps the worker entry to a dozen lines of protocol plumbing and makes
  * the interesting invariants testable in Node — one model per host, single-flight loads,
  * voice switching, one stream session at a time, and cancellation that is observable
- * rather than merely "we stopped listening". A test supplies a fake {@link PhononLoader},
- * so none of this needs ONNX, a browser, or a download.
+ * rather than merely "we stopped listening". A test supplies a fake runner factory, so none
+ * of this needs ONNX, a browser, or a download.
+ *
+ * The host is family-agnostic: it resolves the runner for a manifest's `family` and then only
+ * ever talks to the {@link ModelRunner} interface.
  */
-import type { ProgressEvent } from "@lite-speech/core";
-import type { LoadedPhonon } from "./phonon.js";
+import {
+  resolveRunner,
+  unknownFamilyError,
+  type FamilyRegistry,
+  type ModelRunner,
+} from "./families.js";
 import type {
   CacheCheckRequest,
   CancelRequest,
@@ -22,19 +29,6 @@ import type {
   WorkerResponse,
 } from "./worker-protocol.js";
 
-/** Loads a model; the real one is `loadPhonon`, tests pass a fake. */
-export type PhononLoader = (
-  options: {
-    readonly modelId: string;
-    readonly revision: string;
-    readonly device: string;
-    readonly dtype: string;
-    readonly voiceSha256?: string | undefined;
-    readonly onProgress: (event: ProgressEvent) => void;
-  },
-  voice: string,
-) => Promise<LoadedPhonon>;
-
 /** Opens a cache so per-file state can be inspected; `undefined` disables the check. */
 export type CacheOpener = () => Promise<{
   match(url: string): Promise<{ headers: { get(name: string): string | null } } | undefined>;
@@ -42,7 +36,11 @@ export type CacheOpener = () => Promise<{
 
 /** Dependencies of a {@link ModelHost}, all injectable for tests. */
 export interface ModelHostOptions {
-  readonly load: PhononLoader;
+  /**
+   * Runner factories by family. The host resolves one per load, so one worker can host any
+   * registered family without knowing which.
+   */
+  readonly families: FamilyRegistry;
   /** Writes one response; the worker adds transfer lists, tests collect them. */
   readonly post: (response: WorkerResponse) => void;
   /** Opens the browser cache used for `cache-check`; absent means "cannot prove". */
@@ -81,8 +79,8 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
   const now = options.now ?? ((): number => performance.now());
   const hubBase = options.hubBase ?? "https://huggingface.co";
 
-  let model: LoadedPhonon | undefined;
-  let loadPromise: Promise<LoadedPhonon> | undefined;
+  let model: ModelRunner | undefined;
+  let loadPromise: Promise<ModelRunner> | undefined;
   let loadedModel: { modelId: string; revision: string; device: string; dtype: string } | undefined;
   let loadedVoice: string | undefined;
   let session: StreamSession | undefined;
@@ -103,7 +101,7 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
     await active?.iterator.return(undefined);
   }
 
-  function requireModel(): LoadedPhonon {
+  function requireModel(): ModelRunner {
     if (!model) {
       throw new Error("The model is not loaded; send a load request first");
     }
@@ -122,7 +120,7 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
       dtype: loadedModel.dtype,
       modelId: loadedModel.modelId,
       modelVersion: loadedModel.revision,
-      sampleRate: model.config.sampleRate,
+      sampleRate: model.sampleRate,
       streaming: model.profile.streaming,
     });
   }
@@ -133,7 +131,7 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
    * A failed load is never memoized: the worker would otherwise answer every later attempt
    * with the same stale error instead of retrying a download that may now work.
    */
-  async function load(request: LoadRequest): Promise<LoadedPhonon> {
+  async function load(request: LoadRequest): Promise<ModelRunner> {
     if (model && loadedModel) {
       if (loadedModel.modelId !== request.modelId || loadedModel.revision !== request.revision) {
         throw new Error(
@@ -149,20 +147,31 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
       }
       return model;
     }
-    loadPromise ??= (async (): Promise<LoadedPhonon> => {
-      const loaded = await options.load(
-        {
-          modelId: request.modelId,
-          revision: request.revision,
-          device: request.device,
-          dtype: request.dtype,
-          ...(request.voiceSha256 !== undefined && { voiceSha256: request.voiceSha256 }),
-          onProgress: (event) => {
-            post({ kind: "progress", id: request.id, event });
-          },
+    loadPromise ??= (async (): Promise<ModelRunner> => {
+      const family = request.family;
+      const runner = resolveRunner(family, options.families);
+      if (runner === undefined) {
+        throw unknownFamilyError(family, options.families);
+      }
+      const voice = {
+        id: request.voice ?? "default",
+        language: request.language,
+        repository: request.voiceRepository ?? request.modelId,
+        revision: request.voiceRevision ?? request.revision,
+        path: request.voicePath ?? `voices/${request.voice ?? "default"}.bin`,
+        ...(request.voiceSha256 !== undefined && { sha256: request.voiceSha256 }),
+      };
+      const loaded = await runner({
+        modelId: request.modelId,
+        revision: request.revision,
+        family,
+        device: request.device,
+        dtype: request.dtype,
+        voice,
+        onProgress: (event) => {
+          post({ kind: "progress", id: request.id, event });
         },
-        request.voice ?? "default",
-      );
+      });
       model = loaded;
       loadedModel = {
         modelId: request.modelId,
@@ -170,7 +179,7 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
         device: request.device,
         dtype: request.dtype,
       };
-      loadedVoice = request.voice ?? "default";
+      loadedVoice = voice.id;
       return loaded;
     })();
     loadPromise = loadPromise.catch((error: unknown) => {
@@ -187,7 +196,7 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
    * runner. Doing that eagerly — during `load`, not inside the first synthesis — keeps the
    * cost where the caller can see and report it.
    */
-  async function ensureVoice(request: LoadRequest): Promise<LoadedPhonon> {
+  async function ensureVoice(request: LoadRequest): Promise<ModelRunner> {
     const wanted = request.voice ?? "default";
     if (loadedVoice === wanted) {
       return requireModel();
@@ -228,7 +237,7 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
       return;
     }
 
-    const sampleRate = active.config.sampleRate;
+    const sampleRate = active.sampleRate;
     const pcm = new Float32Array(samples);
     let offset = 0;
     for (const frame of frames) {
@@ -262,7 +271,7 @@ export function createModelHost(options: ModelHostOptions): ModelHost {
     post({ kind: "inference-start", id: request.id, textLength: request.text.length });
     session = {
       id: request.id,
-      sampleRate: active.config.sampleRate,
+      sampleRate: active.sampleRate,
       iterator: active.synthesize(request.text, {
         isCancelled: () => cancelled.has(request.id),
         temperature: request.temperature,

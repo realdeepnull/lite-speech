@@ -18,7 +18,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createOnnxEngine, type OnnxEngine } from "../src/create-onnx-engine.js";
-import { assetUrl } from "../src/models.js";
+import { assetUrl } from "../src/catalog.js";
 
 /** Text long enough to produce several frames but short enough to keep the suite quick. */
 const TEXT = "Hello from lite-speech in Chromium.";

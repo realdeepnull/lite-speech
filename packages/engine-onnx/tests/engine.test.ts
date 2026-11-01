@@ -15,9 +15,14 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { createOnnxEngine, type OnnxEngineOptions } from "../src/create-onnx-engine.js";
+import {
+  PHONON_MODEL,
+  PHONON_VOICES,
+  PHONON_VOICES_MANIFEST,
+  voiceManifest,
+} from "../src/models.js";
 import type { FsProbe } from "../src/transformers-engine.js";
 import { createFakeLoader } from "./helpers/fake-loader.js";
-
 /** Builds an in-thread engine around a fake loader, the way Node would. */
 async function createEngine(
   loaderOptions: Parameters<typeof createFakeLoader>[0] = {},
@@ -31,7 +36,7 @@ async function createEngine(
   const engine = await createOnnxEngine({
     device: "cpu",
     worker: false,
-    inThreadLoader: loader.load,
+    families: loader.families,
     ...(fsProbe !== undefined && { fsProbe }),
     ...engineOptions,
   });
@@ -43,12 +48,18 @@ describe("engine through createTts()", () => {
     const { engine } = await createEngine();
     expect(engine.supports({ language: "en" })).toBe(true);
     expect(engine.supports({ language: "de" })).toBe(false);
+    // A dialect of a registered language resolves to that language's model rather than being
+    // rejected; the audio is the same model either way.
+    expect(engine.supports({ language: "en-GB" })).toBe(true);
 
     const voices = engine.voices();
     expect(voices.length).toBeGreaterThan(0);
     // `default` first, so `createTts({ voice: undefined })` picks what upstream calls canonical.
     expect(voices[0]?.id).toBe("default");
     expect(voices.every((voice) => voice.language.startsWith("en"))).toBe(true);
+    // Presentation data comes from the manifest, not from a hard-coded table in the engine.
+    expect(voices[0]?.name).toBe("Default");
+    expect(voices[0]?.gender).toBe("female");
   });
 
   it("synthesizes through the core and reports the resolved capabilities", async () => {
@@ -116,6 +127,42 @@ describe("engine through createTts()", () => {
     expect(events.map((event) => event.type)).toContain("device-resolved");
     expect(events.map((event) => event.type)).not.toContain("device-fallback");
     await tts.dispose();
+  });
+
+  it("rejects a voice that belongs to another language's model, naming it", async () => {
+    const german = {
+      ...PHONON_MODEL,
+      id: "mirror/phonon-de",
+      revision: "a".repeat(40),
+      languages: ["de"],
+    };
+    const germanVoice = voiceManifest(german, PHONON_VOICES[0]!, "de");
+    const registry = {
+      models: [PHONON_MODEL, german],
+      voices: [...PHONON_VOICES_MANIFEST, germanVoice],
+    };
+
+    const ok = await createEngine({}, registry);
+    const germanTts = createTts({ engine: ok.engine, offline: "allow", language: "de" });
+    await expect(germanTts.preload()).resolves.toBeUndefined();
+    await germanTts.dispose();
+
+    // The voice list is flat across models, so `createTts()` accepts the English id; the engine is
+    // the one that knows which model actually ships it.
+    const wrongEngine = await createEngine({}, registry);
+    const wrong = createTts({
+      engine: wrongEngine.engine,
+      offline: "allow",
+      voice: "LMDIYE0Oa377Qh6Z",
+      language: "de",
+    });
+    await expect(wrong.preload()).rejects.toSatisfy(
+      (error: unknown) =>
+        isTtsError(error) &&
+        error.code === TTS_ERROR_CODES.VOICE_NOT_SUPPORTED &&
+        /LMDIYE0Oa377Qh6Z/.test(error.message),
+    );
+    await wrong.dispose();
   });
 
   it("streams ordered, gap-free chunks with exactly one final chunk", async () => {
@@ -350,12 +397,14 @@ describe("engine through createTts()", () => {
       device: "cpu",
       worker: false,
       fsProbe: probe,
-      inThreadLoader: async (options, voice) => {
-        // Pretend the download wrote half of the manifest before failing.
-        written.add(
-          "https://huggingface.co/onnx-community/phonon-31m-en-ONNX/resolve/4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4/config.json",
-        );
-        return loader.load(options, voice);
+      families: {
+        phonon: async (options) => {
+          // Pretend the download wrote half of the manifest before failing.
+          written.add(
+            "https://huggingface.co/onnx-community/phonon-31m-en-ONNX/resolve/4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4/config.json",
+          );
+          return loader.families["phonon"]!(options);
+        },
       },
     });
     const tts = createTts({ engine, offline: "allow" });
@@ -386,7 +435,7 @@ describe("engine through createTts()", () => {
       device: "cpu",
       worker: false,
       fsProbe: probe,
-      inThreadLoader: loader.load,
+      families: loader.families,
     });
     const tts = createTts({ engine, offline: "allow" });
 
@@ -427,15 +476,17 @@ describe("engine through createTts()", () => {
       device: "cpu",
       worker: false,
       fsProbe: probe,
-      inThreadLoader: async (options, voice) => {
-        const loaded = await loader.load(options, voice);
-        const described = await engine.describeAssets({ language: "en", voice: "default" });
-        for (const file of described.files) {
-          if (file.url !== undefined) {
-            written.add(file.url);
+      families: {
+        phonon: async (options) => {
+          const loaded = await loader.families["phonon"]!(options);
+          const described = await engine.describeAssets({ language: "en", voice: "default" });
+          for (const file of described.files) {
+            if (file.url !== undefined) {
+              written.add(file.url);
+            }
           }
-        }
-        return loaded;
+          return loaded;
+        },
       },
     });
     const tts = createTts({ engine, offline: "allow", voice: "default" });
@@ -469,7 +520,7 @@ describe("engine through createTts()", () => {
           cached: async (urls) => urls.map(() => ({ cached: false })),
           remove: async () => undefined,
         },
-        inThreadLoader: loader.load,
+        families: loader.families,
       });
       const tts = createTts({ engine, offline: "allow", voice: "default" });
 

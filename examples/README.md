@@ -20,13 +20,21 @@ loaded from `file://`.
 
 What it demonstrates:
 
-- `createOnnxEngine({ device: "auto" })` resolving WebGPU or WASM, and reporting which.
-- The voice list read synchronously from the engine, before anything is downloaded.
-- `describeAssets()` rendering the cache state, and `estimateDownload()` as the
-  consent figure.
+- A **catalogue built from manifests** (`createRegistry({ models, voices })`), so the
+  language and voice selectors are the catalogue rather than a hard-coded list — the M6
+  seam, visible in the smallest possible consumer.
+- `createOnnxEngine({ device: "auto", registry })` resolving WebGPU or WASM, and
+  reporting the resolved device/dtype (including a documented fallback) before anything
+  is downloaded.
+- Language-aware selection: the voice list is filtered by the chosen language, and
+  `createTts({ language, voice })` is rebuilt when either changes.
+- `describeAssets()` rendering the cache state per selection, including the **dtype
+  variant** the resolved device priced, and `estimateDownload()` as the consent figure.
+  Switching to an uncached voice shows the missing file _before_ Speak is pressed.
 - `prepare({ allowNetwork: true, verify: true })` and `verifyAssets()` as the
   provisioning flow, including a visible integrity state.
-- `synthesize()` and `stream()`, with the stream's time-to-first-chunk visible.
+- `synthesize()` and `stream()`, with the stream's time-to-first-chunk visible, and the
+  sample rate read from the chunks rather than assumed.
 - `AbortController` cancellation through the Stop button.
 - `removeModel()` eviction, after which strict offline correctly refuses.
 

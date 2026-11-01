@@ -18,20 +18,28 @@
  */
 import type { ProgressEvent, StreamingClass } from "@lite-speech/core";
 
-/** `load`: prepare the tokenizer, both graphs, and one voice. */
+/** `load`: prepare the tokenizer, the graphs, and one voice. */
 export interface LoadRequest {
   readonly kind: "load";
   readonly id: number;
   readonly modelId: string;
   readonly revision: string;
+  /** Model family, e.g. `"phonon"`. Selects the runner. */
+  readonly family: string;
   /** Resolved device: `"wasm"`, `"webgpu"`, or a Node.js backend such as `"cpu"`. */
   readonly device: string;
-  /** Resolved dtype: `"fp32"`, `"q4"`, or `"q4f16"`. */
+  /** Resolved dtype, e.g. `"fp32"`, `"q4"`, or `"q4f16"`. */
   readonly dtype: string;
-  /** `metadata.profile` of the manifest; omitted means the built-in profile. */
-  readonly profile?: string;
   /** Voice to preload; per-request `voice` can switch it later. */
   readonly voice?: string;
+  /** Language of that voice. Defaults to the model's first registered language. */
+  readonly language: string;
+  /** Repository holding the voice asset; defaults to `modelId`. */
+  readonly voiceRepository?: string;
+  /** Revision of that repository; defaults to `revision`. */
+  readonly voiceRevision?: string;
+  /** Path of the voice asset inside the repository. */
+  readonly voicePath?: string;
   /** Expected SHA-256 of the voice file, when the manifest declares one. */
   readonly voiceSha256?: string;
 }

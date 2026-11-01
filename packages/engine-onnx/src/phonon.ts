@@ -1,10 +1,10 @@
 /**
- * The Phonon 31M EN graph runner.
+ * The Phonon graph runner.
  *
  * Drives the two ONNX graphs directly (`flow_lm`, then `mimi_decoder`) because the pinned
- * Transformers.js release has no model class for this architecture (M1 §4). Every member used here
- * is public: `AutoConfig`, `AutoTokenizer`, `PreTrainedModel`, `Tensor`, and the tokenizer's
- * `tokenize` / `get_vocab` / `convert_tokens_to_ids`.
+ * Transformers.js release has no model class for this architecture (M1 §4). Every member used
+ * here is public: `AutoConfig`, `AutoTokenizer`, `PreTrainedModel`, `Tensor`, and the
+ * tokenizer's `tokenize` / `get_vocab` / `convert_tokens_to_ids`.
  *
  * Only the worker entry imports this module, which is what keeps the model runtime out of the
  * engine's main-thread bundle.
@@ -19,41 +19,15 @@ import {
 } from "@huggingface/transformers";
 
 import type { ProgressEvent } from "@lite-speech/core";
+import { assetUrl, hubRevisionTemplate } from "./catalog.js";
+import type { ModelProfile, ModelRunner, RunnerLoadOptions } from "./families.js";
 import {
-  PHONON_PROFILE_ID,
+  PHONON_PROFILE,
   normalizeSegment,
-  type ModelProfile,
+  phononMaxFrames,
+  readPhononConfig,
   type PhononConfig,
-} from "./profiles.js";
-import { hubRevisionTemplate } from "./models.js";
-
-/** The `phonon` section of the pinned model's `config.json`. */
-interface PhononConfigJson {
-  readonly sample_rate: number;
-  readonly frame_rate: number;
-  readonly samples_per_frame: number;
-  readonly latent_dim: number;
-  readonly voice_dim: number;
-  readonly eos_threshold: number;
-  readonly temperature: number;
-  readonly flow_lm: {
-    readonly num_layers: number;
-    readonly num_heads: number;
-    readonly head_dim: number;
-  };
-  readonly mimi_decoder: {
-    readonly num_layers: number;
-    readonly num_heads: number;
-    readonly head_dim: number;
-    readonly conv_states: Readonly<Record<string, readonly number[]>>;
-  };
-}
-
-/** The slice of `config.json` this profile reads. */
-interface PhononModelConfigJson {
-  readonly phonon?: PhononConfigJson;
-}
-
+} from "./phonon-profile.js";
 /** What one session call returns: named output tensors. */
 type GraphOutputs = Record<string, Tensor>;
 
@@ -64,50 +38,6 @@ type GraphSession = ((inputs: Record<string, unknown>) => Promise<GraphOutputs>)
 
 /** A tensor state map: the KV cache, the decoder convolution state, and friends. */
 type TensorState = Record<string, Tensor>;
-
-/** Per-run options supplied by the worker host. */
-export interface PhononRunOptions {
-  /** Sampled between frames so a cancel lands without waiting for the end of the utterance. */
-  readonly isCancelled: () => boolean;
-  /** Overrides the model's own `phonon.temperature`. */
-  readonly temperature?: number | undefined;
-}
-
-/** A loaded Phonon model, independent of how it is transported. */
-export interface LoadedPhonon {
-  readonly config: PhononConfig;
-  readonly profile: ModelProfile;
-  /** Encodes text with the public byte-fallback encoder. */
-  readonly encode: (text: string) => readonly number[];
-  /** Runs one prepared segment, yielding mono PCM frames of `samplesPerFrame` samples. */
-  readonly synthesize: (segment: string, options: PhononRunOptions) => AsyncGenerator<Float32Array>;
-  /** Releases every session and GPU buffer. Idempotent. */
-  readonly dispose: () => Promise<void>;
-}
-
-/** Everything the loader needs, taken from the engine's manifest. */
-export interface PhononLoadOptions {
-  readonly modelId: string;
-  readonly revision: string;
-  /** Resolved device: `"wasm"`, `"webgpu"`, or `"cpu"` under `onnxruntime-node`. */
-  readonly device: string;
-  /** Resolved dtype: `"fp32"`, `"q4"`, or `"q4f16"`. */
-  readonly dtype: string;
-  /**
-   * Expected SHA-256 of the voice file, when the manifest declares one.
-   *
-   * Checked **before** the bytes are cached, so a corrupted or wrong-revision embedding never
-   * enters the cache: an integrity failure at download time is recoverable by retrying, while a
-   * corrupt cache entry is a permanent silent wrong answer.
-   */
-  readonly voiceSha256?: string | undefined;
-  /**
-   * Directory for downloaded files. Only meaningful under Node.js, where the library caches to the
-   * filesystem; the cache probe must resolve the same directory, so it is set in one place.
-   */
-  readonly cacheDir?: string | undefined;
-  readonly onProgress?: ((event: ProgressEvent) => void) | undefined;
-}
 
 /** Maximum accepted voice-file size, so a wrong URL cannot be read into memory. */
 const MAX_VOICE_BYTES = 8 * 1024 * 1024;
@@ -218,6 +148,10 @@ function toProgressEvent(info: Record<string, unknown>): ProgressEvent | undefin
  * would collapse into `<unk>`. Every piece from `tokenize()` is therefore kept, or expanded into
  * its UTF-8 `<0xXX>` byte tokens, which this vocabulary contains for all 256 byte values. The spike
  * verified this reproduces the model card's private-field patch byte for byte at temperature `0`.
+ *
+ * Byte fallback is also what makes a non-Latin segment representable at all, so the encoder stays
+ * language-agnostic: the profile decides what the text says, the encoder only makes its bytes
+ * addressable.
  */
 function createPublicEncoder(tokenizer: PreTrainedTokenizer): (text: string) => readonly number[] {
   const vocab = tokenizer.get_vocab();
@@ -244,100 +178,7 @@ function createPublicEncoder(tokenizer: PreTrainedTokenizer): (text: string) => 
   };
 }
 
-/** Reads and validates the `phonon` section of a loaded configuration. */
-function readPhononConfig(config: unknown): PhononConfig {
-  const phonon = (config as PhononModelConfigJson | null | undefined)?.phonon;
-  if (phonon === undefined || phonon === null) {
-    throw new Error(
-      `The model does not declare a "phonon" configuration, so the "${PHONON_PROFILE_ID}" profile ` +
-        "cannot run it. Register a profile for this model family or point the engine at a Phonon export.",
-    );
-  }
-  return {
-    sampleRate: phonon.sample_rate,
-    frameRate: phonon.frame_rate,
-    samplesPerFrame: phonon.samples_per_frame,
-    latentDim: phonon.latent_dim,
-    voiceDim: phonon.voice_dim,
-    eosThreshold: phonon.eos_threshold,
-    temperature: phonon.temperature,
-    flow: {
-      numLayers: phonon.flow_lm.num_layers,
-      numHeads: phonon.flow_lm.num_heads,
-      headDim: phonon.flow_lm.head_dim,
-    },
-    mimi: {
-      numLayers: phonon.mimi_decoder.num_layers,
-      numHeads: phonon.mimi_decoder.num_heads,
-      headDim: phonon.mimi_decoder.head_dim,
-      convStates: phonon.mimi_decoder.conv_states,
-    },
-  };
-}
-
-/**
- * Downloads and validates one voice embedding.
- *
- * The voice is fetched here rather than through Transformers.js, so it is cached here too — with
- * the same Cache Storage API and the same cache name the library uses. Without that, `isCached()`
- * would report the voice as missing forever: `offline: "strict"` could never work in a browser, and
- * `removeModel()` would leave the embedding behind.
- *
- * In Node.js there is no Cache Storage, so this reads over the network and the filesystem probe
- * reports the file absent — accurate, because nothing writes it there.
- */
-async function loadVoice(
-  options: PhononLoadOptions,
-  voice: string,
-  config: PhononConfig,
-): Promise<Tensor> {
-  const url = `https://huggingface.co/${options.modelId}/resolve/${options.revision}/voices/${voice}.bin`;
-  const cache = typeof caches === "undefined" ? undefined : await openModelCache();
-  const cached = await cache?.match(url);
-  const response = cached ?? (await fetch(url));
-  if (!response.ok) {
-    throw new Error(`Voice download failed with HTTP ${String(response.status)}: ${url}`);
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (options.voiceSha256 !== undefined) {
-    const actual = await sha256Hex(bytes);
-    if (actual !== options.voiceSha256) {
-      throw new Error(
-        `Voice ${voice}.bin failed its integrity check: expected sha256 ${options.voiceSha256}, ` +
-          `got ${actual ?? "no digest (this runtime has no crypto.subtle)"}`,
-      );
-    }
-  }
-  if (cache !== undefined && cached === undefined) {
-    // Store from the bytes already read: a `Response` body can only be consumed once. The
-    // `content-length` header is set explicitly so `describeAssets()` can report the real size of
-    // a cached voice and compare it with the manifest, like it does for every other file.
-    await cache.put(
-      url,
-      new Response(bytes, {
-        headers: {
-          "content-type": "application/octet-stream",
-          "content-length": String(bytes.byteLength),
-        },
-      }),
-    );
-  }
-  const columnBytes = config.voiceDim * Float32Array.BYTES_PER_ELEMENT;
-  if (
-    bytes.byteLength === 0 ||
-    bytes.byteLength % columnBytes !== 0 ||
-    bytes.byteLength > MAX_VOICE_BYTES
-  ) {
-    throw new Error(
-      `Voice file ${voice}.bin is not a whole number of ${String(config.voiceDim)}-float columns ` +
-        `(${String(bytes.byteLength)} bytes)`,
-    );
-  }
-  const data = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
-  return f32([1, config.voiceDim, data.length / config.voiceDim], data);
-}
-
-/** Cache name Transformers.js uses, so voice files are found by the same lookups. */
+/** Cache name Transformers.js uses, so voice files are found by the same cache lookups. */
 const MODEL_CACHE_NAME = "transformers-cache";
 
 /** Returns the SHA-256 of `bytes` as lowercase hex, or `undefined` without `crypto.subtle`. */
@@ -379,13 +220,72 @@ function randomNormal(): number {
 }
 
 /**
+ * Downloads and validates one voice embedding.
+ *
+ * The voice is fetched here rather than through Transformers.js, so it is cached here too — with
+ * the same Cache Storage API and the same cache name the library uses. Without that, `isCached()`
+ * would report the voice as missing forever: `offline: "strict"` could never work in a browser, and
+ * `removeModel()` would leave the embedding behind.
+ *
+ * In Node.js there is no Cache Storage, so this reads over the network and the filesystem probe
+ * reports the file absent — accurate, because nothing writes it there.
+ */
+async function loadVoice(options: RunnerLoadOptions, config: PhononConfig): Promise<Tensor> {
+  const { voice } = options;
+  const url = assetUrl(voice.repository, voice.revision, voice.path);
+  const cache = typeof caches === "undefined" ? undefined : await openModelCache();
+  const cached = await cache?.match(url);
+  const response = cached ?? (await fetch(url));
+  if (!response.ok) {
+    throw new Error(`Voice download failed with HTTP ${String(response.status)}: ${url}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (voice.sha256 !== undefined) {
+    const actual = await sha256Hex(bytes);
+    if (actual !== voice.sha256) {
+      throw new Error(
+        `Voice ${voice.path} failed its integrity check: expected sha256 ${voice.sha256}, ` +
+          `got ${actual ?? "no digest (this runtime has no crypto.subtle)"}`,
+      );
+    }
+  }
+  if (cache !== undefined && cached === undefined) {
+    // Store from the bytes already read: a `Response` body can only be consumed once. The
+    // `content-length` header is set explicitly so `describeAssets()` can report the real size of
+    // a cached voice and compare it with the manifest, like it does for every other file.
+    await cache.put(
+      url,
+      new Response(bytes, {
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(bytes.byteLength),
+        },
+      }),
+    );
+  }
+  const columnBytes = config.voiceDim * Float32Array.BYTES_PER_ELEMENT;
+  if (
+    bytes.byteLength === 0 ||
+    bytes.byteLength % columnBytes !== 0 ||
+    bytes.byteLength > MAX_VOICE_BYTES
+  ) {
+    throw new Error(
+      `Voice file ${voice.path} is not a whole number of ${String(config.voiceDim)}-float columns ` +
+        `(${String(bytes.byteLength)} bytes)`,
+    );
+  }
+  const data = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+  return f32([1, config.voiceDim, data.length / config.voiceDim], data);
+}
+
+/**
  * Loads the configuration, tokenizer, both graphs, and one voice; returns a runner.
  *
  * Order is deliberate: configuration first (it carries the cache shapes), then the tokenizer (a
  * small download that makes progress visible before the graphs start), then the graphs, then the
  * voice.
  */
-export async function loadPhonon(options: PhononLoadOptions, voice: string): Promise<LoadedPhonon> {
+export async function loadPhonon(options: RunnerLoadOptions): Promise<ModelRunner> {
   // A dev-server SPA fallback answers unknown URLs with `index.html` and status 200, and
   // Transformers.js would parse that HTML as ONNX. Remote Hub assets only.
   env.allowLocalModels = false;
@@ -454,7 +354,7 @@ export async function loadPhonon(options: PhononLoadOptions, voice: string): Pro
   })) as unknown as GraphSession;
 
   const encode = createPublicEncoder(tokenizer);
-  const voiceTensor = await loadVoice(options, voice, phonon);
+  const voiceTensor = await loadVoice(options, phonon);
 
   /**
    * One flow-graph call.
@@ -488,21 +388,18 @@ export async function loadPhonon(options: PhononLoadOptions, voice: string): Pro
   );
 
   const profile: ModelProfile = {
-    id: PHONON_PROFILE_ID,
-    streaming: "incremental-frames",
+    ...PHONON_PROFILE,
     frameRate: phonon.frameRate,
-    prepareSegment: normalizeSegment,
-    maxFrames: (prepared: string, inputLength: number): number => {
-      const budget = Math.ceil((inputLength / 3 + 2) * phonon.frameRate);
-      const trimmed = prepared.trim();
-      const words = trimmed.length === 0 ? 0 : trimmed.split(/\s+/u).length;
-      return Math.max(budget, 2) + (words <= 4 ? 3 : 1);
-    },
+    maxFrames: (prepared: string, inputLength: number): number =>
+      phononMaxFrames(prepared, inputLength, phonon),
   };
 
   const synthesize = async function* (
     segment: string,
-    runOptions: PhononRunOptions,
+    runOptions: {
+      readonly isCancelled: () => boolean;
+      readonly temperature?: number | undefined;
+    },
   ): AsyncGenerator<Float32Array> {
     const text = normalizeSegment(segment);
     if (text.length === 0) {
@@ -524,7 +421,7 @@ export async function loadPhonon(options: PhononLoadOptions, voice: string): Pro
     // `NaN` marks the first frame, which starts from an empty decoder state.
     let latent = f32([1, 1, phonon.latentDim], new Float32Array(phonon.latentDim).fill(Number.NaN));
     const temperature = runOptions.temperature ?? phonon.temperature;
-    const maxFrames = profile.maxFrames(text, ids.length, phonon);
+    const maxFrames = profile.maxFrames?.(text, ids.length) ?? Number.POSITIVE_INFINITY;
     let countdown: number | null = null;
 
     try {
@@ -570,9 +467,8 @@ export async function loadPhonon(options: PhononLoadOptions, voice: string): Pro
 
   let disposed = false;
   return {
-    config: phonon,
     profile,
-    encode,
+    sampleRate: phonon.sampleRate,
     synthesize,
     dispose: async (): Promise<void> => {
       if (disposed) {

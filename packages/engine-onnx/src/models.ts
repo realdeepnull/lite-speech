@@ -1,25 +1,49 @@
-import type { ModelManifest, VoiceManifest } from "@lite-speech/core";
+/**
+ * The built-in catalogue: the models and voices the library ships manifests for.
+ *
+ * This module is *data only*. Adding a model, a language, or a family is an entry here — or
+ * manifests passed to `createOnnxEngine()` by the application — never an engine change.
+ *
+ * Every entry is a pin: `revision` is the commit SHA the measurements were taken at, never
+ * `main`, and every file declares its size and its Hub blob digest, because that is what a
+ * consent dialog and an integrity check are made of.
+ */
+import type { LanguageCode, ModelManifest, VoiceManifest } from "@lite-speech/core";
 
-/** Stable engine identifier. Echoed in `AudioResult.engine` and capabilities. */
-export const ENGINE_ID = "onnx";
+import { createRegistry, type EngineRegistry } from "./catalog.js";
 
-/** Origin of every default asset. Overridable per engine via `createOnnxEngine()`. */
-const HF_BASE = "https://huggingface.co";
+/** The language the built-in catalogue registers today. */
+export const PRIMARY_LANGUAGE = "en";
+
+/** One voice in the catalogue, with the presentation data a UI needs. */
+export interface CatalogueVoice {
+  readonly id: string;
+  readonly name: string;
+  readonly gender: "female" | "male";
+  /**
+   * Accent of the recording, e.g. `"en-GB"`.
+   *
+   * A label, not a language: the model does not switch pronunciation, so reporting the accent
+   * as a language would make `supports("en-GB")` a promise the profile cannot keep.
+   */
+  readonly accent: string;
+}
 
 /**
  * The one verified Phonon profile of the MVP.
  *
- * Everything here is a pin, not a pointer: `revision` is the commit SHA the M1
- * spike measured, never `main`. Sizes come from the Hub tree and are what a
- * consent dialog must show; the hashes are the Hub's own blob digests, so a
- * later integrity check (M4) can verify a download without a second source of
- * truth.
+ * Sizes come from the Hub tree and are what a consent dialog must show; the hashes are the
+ * Hub's own blob digests, so an integrity check needs no second source of truth.
+ *
+ * `variant` marks the build each weight file belongs to. The engine keeps the files matching
+ * the dtype it resolved, so pricing a profile and running it never disagree.
  */
 export const PHONON_MODEL: ModelManifest = {
   id: "onnx-community/phonon-31m-en-ONNX",
   revision: "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4",
   license: "Apache-2.0",
   family: "phonon",
+  languages: [PRIMARY_LANGUAGE],
   sampleRate: 24000,
   files: [
     {
@@ -40,110 +64,109 @@ export const PHONON_MODEL: ModelManifest = {
     // `fp32` ships the two graphs without external data.
     {
       path: "onnx/flow_lm.onnx",
+      variant: "fp32",
       size: 120089751,
       sha256: "27f933db151b81d30606b27f9a490dc9d73d93a4ee302c4f5ac29401fa858974",
     },
     {
       path: "onnx/mimi_decoder.onnx",
+      variant: "fp32",
       size: 41267821,
       sha256: "842ba85dc849f9ed19d2a34dfaed2985fde729de75c7647f6033707454ec1d3d",
     },
     // `q4` splits the flow graph into a skeleton plus one external data chunk.
     {
       path: "onnx/flow_lm_q4.onnx",
+      variant: "q4",
       size: 84132,
       sha256: "84b113376e3a768f833a0fcd1fc596af3fa5b9f33aed62ee4a40e0f1c21862be",
     },
     {
       path: "onnx/flow_lm_q4.onnx_data",
+      variant: "q4",
       size: 26073088,
       sha256: "77420b5f392d2573d61b7cafcde2ec2a1a36ebe3d62be8ca3b3ef3b3ad73a6c5",
     },
     {
       path: "onnx/mimi_decoder_q4.onnx",
+      variant: "q4",
       size: 41267821,
       sha256: "842ba85dc849f9ed19d2a34dfaed2985fde729de75c7647f6033707454ec1d3d",
     },
     // `q4f16` splits both graphs and needs `shader-f16` on WebGPU.
     {
       path: "onnx/flow_lm_q4f16.onnx",
+      variant: "q4f16",
       size: 254451,
       sha256: "8c286f794689d85f07dc253a797196319bf654384198fa649d80666bad0aa9ec",
     },
     {
       path: "onnx/flow_lm_q4f16.onnx_data",
+      variant: "q4f16",
       size: 19828736,
       sha256: "79651df4567d7b8a7fd6178406ae57c3f9dce24ac25beccbabceac9024ab3c22",
     },
     {
       path: "onnx/mimi_decoder_q4f16.onnx",
+      variant: "q4f16",
       size: 54375,
       sha256: "010b6abb9a3022c2cb119cb8a540da902fcc44d363625010aa2d7dff54d8d139",
     },
     {
       path: "onnx/mimi_decoder_q4f16.onnx_data",
+      variant: "q4f16",
       size: 20608000,
       sha256: "b4021bb79ffc278883c649d8095fc5fca024db12f375f74e163036aefa566e7b",
     },
   ],
 };
 
-/** One English voice shipped by the pinned repository. */
-interface PhononVoice {
-  readonly id: string;
-  readonly name: string;
-  readonly gender: "female" | "male";
-  /** Accent variant of the recording, kept as a label rather than as a language. */
-  readonly locale: "en-US" | "en-GB";
-}
-
 /**
  * The English voices of `voices/voices.jsonl` at the pinned revision.
  *
  * The repository carries 102 voices across six design languages, but this profile always speaks
  * English (M1 §9.4): the design language of a Spanish or German embedding is metadata, not a
- * capability. Only English-designed voices are registered, and every one of them reports the
- * language `"en"` — advertising `"en-GB"` as a language would make `supports("en-GB")` a promise
- * this profile cannot keep, since it does not switch pronunciation.
+ * capability, so only English-designed voices are registered and every one reports `"en"`.
  *
  * `default` is the model card's own default voice rather than a speaker from `voices.jsonl`; it
  * is kept first so `createTts()` picks what the upstream runtime also treats as canonical.
  */
-const PHONON_VOICES: readonly PhononVoice[] = [
-  { id: "default", name: "Default", gender: "female", locale: "en-US" },
-  { id: "NbpkqMVS3CJeq2j8", name: "Zoey", gender: "female", locale: "en-US" },
-  { id: "NIWIOv5vTi5eRMj8", name: "Juniper", gender: "female", locale: "en-US" },
-  { id: "vjFyp2BcCyTlUmYb", name: "Everly", gender: "female", locale: "en-US" },
-  { id: "4SZHfMpw-p46Ywgs", name: "Harper", gender: "female", locale: "en-US" },
-  { id: "bXwrkHhURL1VFJdG", name: "Hadley", gender: "female", locale: "en-US" },
-  { id: "nGzMHMPAWGaJFHOo", name: "Delia", gender: "female", locale: "en-US" },
-  { id: "LMDIYE0Oa377Qh6Z", name: "Easton", gender: "male", locale: "en-US" },
-  { id: "40QrMVgAxFiUnP9f", name: "Micah", gender: "male", locale: "en-US" },
-  { id: "0zLApsZfVLLNaEGl", name: "Trevor", gender: "male", locale: "en-US" },
-  { id: "_6Aslh2DxfmnRLmP", name: "Russell", gender: "male", locale: "en-US" },
-  { id: "qIxlZ7Ei8KvWlyQH", name: "Preston", gender: "male", locale: "en-US" },
-  { id: "d9XCyhjo4JhkHF1d", name: "Miles", gender: "male", locale: "en-US" },
-  { id: "6PWnV0Nq4wu7RVBT", name: "Maeve", gender: "female", locale: "en-GB" },
-  { id: "GgfEkEJtxZR7gnpy", name: "Freya", gender: "female", locale: "en-GB" },
-  { id: "uem82D50GRv2Dwma", name: "Pippa", gender: "female", locale: "en-GB" },
-  { id: "y9bQqIDnyxwqK01t", name: "Elodie-Rose", gender: "female", locale: "en-GB" },
-  { id: "gDT1nz7Ie36ZhL-C", name: "Imogen", gender: "female", locale: "en-GB" },
-  { id: "m9MxpY6IUGXtWp76", name: "Lottie", gender: "female", locale: "en-GB" },
-  { id: "X6NceqF285Gr04gb", name: "Alfie", gender: "male", locale: "en-GB" },
-  { id: "YyKcxPG7iIgS3jsK", name: "Hugh", gender: "male", locale: "en-GB" },
-  { id: "zUCxzrOrugTSis03", name: "Edwin", gender: "male", locale: "en-GB" },
-  { id: "JOW0vchyswkQUMDS", name: "Spencer", gender: "male", locale: "en-GB" },
-  { id: "dME3IWyZBvmh1n1q", name: "Toby", gender: "male", locale: "en-GB" },
-  { id: "Zn7g6NxLqXlJb7Qi", name: "Teddy", gender: "male", locale: "en-GB" },
-  { id: "gfP44RlHwr2kEwk7", name: "Bryony", gender: "female", locale: "en-GB" },
+export const PHONON_VOICES: readonly CatalogueVoice[] = [
+  { id: "default", name: "Default", gender: "female", accent: "en-US" },
+  { id: "NbpkqMVS3CJeq2j8", name: "Zoey", gender: "female", accent: "en-US" },
+  { id: "NIWIOv5vTi5eRMj8", name: "Juniper", gender: "female", accent: "en-US" },
+  { id: "vjFyp2BcCyTlUmYb", name: "Everly", gender: "female", accent: "en-US" },
+  { id: "4SZHfMpw-p46Ywgs", name: "Harper", gender: "female", accent: "en-US" },
+  { id: "bXwrkHhURL1VFJdG", name: "Hadley", gender: "female", accent: "en-US" },
+  { id: "nGzMHMPAWGaJFHOo", name: "Delia", gender: "female", accent: "en-US" },
+  { id: "LMDIYE0Oa377Qh6Z", name: "Easton", gender: "male", accent: "en-US" },
+  { id: "40QrMVgAxFiUnP9f", name: "Micah", gender: "male", accent: "en-US" },
+  { id: "0zLApsZfVLLNaEGl", name: "Trevor", gender: "male", accent: "en-US" },
+  { id: "_6Aslh2DxfmnRLmP", name: "Russell", gender: "male", accent: "en-US" },
+  { id: "qIxlZ7Ei8KvWlyQH", name: "Preston", gender: "male", accent: "en-US" },
+  { id: "d9XCyhjo4JhkHF1d", name: "Miles", gender: "male", accent: "en-US" },
+  { id: "6PWnV0Nq4wu7RVBT", name: "Maeve", gender: "female", accent: "en-GB" },
+  { id: "GgfEkEJtxZR7gnpy", name: "Freya", gender: "female", accent: "en-GB" },
+  { id: "uem82D50GRv2Dwma", name: "Pippa", gender: "female", accent: "en-GB" },
+  { id: "y9bQqIDnyxwqK01t", name: "Elodie-Rose", gender: "female", accent: "en-GB" },
+  { id: "gDT1nz7Ie36ZhL-C", name: "Imogen", gender: "female", accent: "en-GB" },
+  { id: "m9MxpY6IUGXtWp76", name: "Lottie", gender: "female", accent: "en-GB" },
+  { id: "X6NceqF285Gr04gb", name: "Alfie", gender: "male", accent: "en-GB" },
+  { id: "YyKcxPG7iIgS3jsK", name: "Hugh", gender: "male", accent: "en-GB" },
+  { id: "zUCxzrOrugTSis03", name: "Edwin", gender: "male", accent: "en-GB" },
+  { id: "JOW0vchyswkQUMDS", name: "Spencer", gender: "male", accent: "en-GB" },
+  { id: "dME3IWyZBvmh1n1q", name: "Toby", gender: "male", accent: "en-GB" },
+  { id: "Zn7g6NxLqXlJb7Qi", name: "Teddy", gender: "male", accent: "en-GB" },
+  { id: "gfP44RlHwr2kEwk7", name: "Bryony", gender: "female", accent: "en-GB" },
 ];
 
 /**
  * SHA-256 of every registered voice embedding at the pinned revision.
  *
- * Taken from the Hub's own blob digests, so the manifest needs no second source of truth: a voice
- * downloaded from a mirror is verified against the same number the public Hub reports. The table
- * is keyed by the file name (`<voice>.bin`) because one voice id is not unique across revisions.
+ * Taken from the Hub's own blob digests, so the manifest needs no second source of truth: a
+ * voice downloaded from a mirror is verified against the same number the public Hub reports. The
+ * table is keyed by the file name (`<voice>.bin`) because one voice id is not unique across
+ * revisions.
  */
 const PHONON_VOICE_SHA256: Readonly<Record<string, string>> = {
   default: "d9291d795d2b3b3ca5aaf0d61c44b378918c840824e7c0bc41cfb63e5b0c560b",
@@ -174,123 +197,58 @@ const PHONON_VOICE_SHA256: Readonly<Record<string, string>> = {
   gfP44RlHwr2kEwk7: "03e842cf581b6ca3071706e8314c5536dc9b0b649aef602477100e6c22406bd2",
 };
 
+/**
+ * A voice manifest built from one catalogue entry.
+ *
+ * The digest is skipped rather than guessed when a voice has none, so a manifest can never claim
+ * an integrity check it cannot perform.
+ */
+export function voiceManifest(
+  model: ModelManifest,
+  voice: CatalogueVoice,
+  language: LanguageCode = PRIMARY_LANGUAGE,
+): VoiceManifest {
+  const path = `voices/${voice.id}.bin`;
+  const sha256 = PHONON_VOICE_SHA256[voice.id];
+  return {
+    id: voice.id,
+    modelId: model.id,
+    language,
+    revision: model.revision,
+    license: model.license ?? "unknown",
+    sampleRate: model.sampleRate ?? 24000,
+    name: voice.name,
+    gender: voice.gender,
+    description: `Accent ${voice.accent}`,
+    files: [{ path, size: 256_000, ...(sha256 !== undefined && { sha256 }) }],
+  };
+}
+
 /** Voice manifests of {@link PHONON_MODEL}, one 256 000-byte embedding each. */
-export const PHONON_VOICES_MANIFEST: readonly VoiceManifest[] = PHONON_VOICES.map((voice) => ({
-  id: voice.id,
-  modelId: PHONON_MODEL.id,
-  language: "en",
-  revision: PHONON_MODEL.revision,
-  license: "Apache-2.0",
-  sampleRate: 24000,
-  files: [
-    {
-      path: `voices/${voice.id}.bin`,
-      size: 256_000,
-      ...(PHONON_VOICE_SHA256[voice.id] !== undefined && {
-        sha256: PHONON_VOICE_SHA256[voice.id],
-      }),
-    },
-  ],
-}));
-
-/** Human-readable name of every registered voice. */
-export const PHONON_VOICE_NAMES: Readonly<Record<string, string>> = Object.fromEntries(
-  PHONON_VOICES.map((voice) => [voice.id, voice.name]),
-);
-
-/** Gender hint of every registered voice. */
-export const PHONON_VOICE_GENDERS: Readonly<Record<string, string>> = Object.fromEntries(
-  PHONON_VOICES.map((voice) => [voice.id, voice.gender]),
+export const PHONON_VOICES_MANIFEST: readonly VoiceManifest[] = PHONON_VOICES.map((voice) =>
+  voiceManifest(PHONON_MODEL, voice),
 );
 
 /**
- * The accent label of one voice, e.g. `"en-GB"`, or `undefined` for an unregistered id.
+ * The built-in catalogue.
  *
- * The accent is a label, not a language: this profile speaks `"en"` regardless, so reporting
- * `"en-GB"` as a *language* would promise a pronunciation the model cannot switch to.
+ * One entry per model. A new language or family is a new entry here, or an override passed to
+ * `createOnnxEngine()` — this array is the only place that knows which models exist by default.
  */
-export function voiceAccent(voiceId: string): string | undefined {
-  return PHONON_VOICES.find((voice) => voice.id === voiceId)?.locale;
-}
+export const BUILT_IN_MODELS: readonly ModelManifest[] = [PHONON_MODEL];
 
-/** Language every manifest is registered under. */
-export const PHONON_LANGUAGE = "en";
+/** The built-in voices, for every model of {@link BUILT_IN_MODELS}. */
+export const BUILT_IN_VOICES: readonly VoiceManifest[] = [...PHONON_VOICES_MANIFEST];
 
 /**
- * ONNX filename suffix per dtype, matching Transformers.js' own mapping.
+ * The registry the engine uses when the caller does not supply one.
  *
- * The suffix is the one place where a resolved dtype becomes a file name, so both the asset
- * manifest resolution and the loader read it from here instead of duplicating the table.
- */
-export const DTYPE_SUFFIX: Readonly<Record<string, string>> = {
-  fp32: "",
-  q4: "_q4",
-  q4f16: "_q4f16",
-};
-
-/** Graph base names of the Phonon export. */
-export const PHONON_GRAPHS = ["flow_lm", "mimi_decoder"] as const;
-
-/** A synchronous, declarative registry: the engine never awaits a model lookup. */
-export interface EngineRegistry {
-  /** Resolves a request to its model manifest, or `undefined` when unknown. */
-  model(language: string): ModelManifest | undefined;
-  /** Resolves a request to its voice manifest, or `undefined` when unknown. */
-  voice(model: ModelManifest, voice: string | undefined): VoiceManifest | undefined;
-  /** Every voice of `model`, in registration order. */
-  voices(model: ModelManifest): readonly VoiceManifest[];
-}
-
-/** Builds the URL of one repository file at the manifest's pinned revision. */
-export function assetUrl(modelId: string, revision: string, path: string): string {
-  return `${HF_BASE}/${modelId}/resolve/${revision}/${path}`;
-}
-
-/**
- * The `remotePathTemplate` that pins every Hub lookup to `revision`.
- *
- * Transformers.js resolves model files *and* the tokenizer-file probe
- * (`get_tokenizer_files()` → `get_file_metadata()`, which drops the caller's
- * `revision` option) through `env.remotePathTemplate`. Left at its default
- * (`{model}/resolve/{revision}/` with `revision: "main"`), that probe asks for
- * `resolve/main/...`, which has two consequences a pinned model cannot accept:
- * the request targets a moving branch, and its Cache Storage key differs from the
- * one a provisioned cache holds — so a fully provisioned profile still misses the
- * probe, and `offline: "strict"` makes a request whose only outcome is failure.
- *
- * Pinning the template fixes both at once, because the cache key is derived from the
- * same URL the request would use. `main` is left alone: a caller who asks for a
- * moving branch gets one.
- */
-export function hubRevisionTemplate(revision: string): string {
-  return `{model}/resolve/${encodeURIComponent(revision)}/`;
-}
-
-/**
- * Creates the built-in registry: one Phonon model for `"en"`, plus every
- * registered English voice.
- *
- * `models` overrides the language → {@link ModelManifest} map and `voices`
- * overrides the voice list, which is how an application points at a mirror, a
- * self-hosted copy, or a different (future) profile without a new package.
+ * Built from {@link BUILT_IN_MODELS} and {@link BUILT_IN_VOICES}, so overriding either is a
+ * matter of passing manifests, not of replacing a function.
  */
 export function createDefaultRegistry(
-  models: Readonly<Record<string, ModelManifest>> = { [PHONON_LANGUAGE]: PHONON_MODEL },
-  voices: readonly VoiceManifest[] = PHONON_VOICES_MANIFEST,
+  models: readonly ModelManifest[] = BUILT_IN_MODELS,
+  voices: readonly VoiceManifest[] = BUILT_IN_VOICES,
 ): EngineRegistry {
-  return {
-    model(language: string): ModelManifest | undefined {
-      return models[language];
-    },
-    voice(model: ModelManifest, voice: string | undefined): VoiceManifest | undefined {
-      const candidates = voices.filter((candidate) => candidate.modelId === model.id);
-      if (voice === undefined) {
-        return candidates[0];
-      }
-      return candidates.find((candidate) => candidate.id === voice);
-    },
-    voices(model: ModelManifest): readonly VoiceManifest[] {
-      return voices.filter((candidate) => candidate.modelId === model.id);
-    },
-  };
+  return createRegistry({ models, voices });
 }

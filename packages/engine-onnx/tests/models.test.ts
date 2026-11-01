@@ -7,13 +7,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  DTYPE_SUFFIX,
-  PHONON_MODEL,
-  PHONON_VOICES_MANIFEST,
-  assetUrl,
-  hubRevisionTemplate,
-} from "../src/models.js";
+import { PHONON_MODEL, PHONON_VOICES_MANIFEST } from "../src/models.js";
+import { assetUrl, hubRevisionTemplate } from "../src/catalog.js";
 
 /** The pinned commit this repository's measurements were taken at. */
 const REVISION = "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4";
@@ -51,10 +46,18 @@ describe("PHONON_MODEL", () => {
 
   it("ships every dtype variant the engine can resolve to", () => {
     const paths = new Set(PHONON_MODEL.files.map((file) => file.path));
-    for (const dtype of ["fp32", "q4", "q4f16"] as const) {
-      const suffix = DTYPE_SUFFIX[dtype];
-      expect(paths.has(`onnx/flow_lm${suffix}.onnx`)).toBe(true);
-      expect(paths.has(`onnx/mimi_decoder${suffix}.onnx`)).toBe(true);
+    for (const path of [
+      "onnx/flow_lm.onnx",
+      "onnx/flow_lm_q4.onnx",
+      "onnx/flow_lm_q4.onnx_data",
+      "onnx/flow_lm_q4f16.onnx",
+      "onnx/flow_lm_q4f16.onnx_data",
+      "onnx/mimi_decoder.onnx",
+      "onnx/mimi_decoder_q4.onnx",
+      "onnx/mimi_decoder_q4f16.onnx",
+      "onnx/mimi_decoder_q4f16.onnx_data",
+    ]) {
+      expect(paths.has(path)).toBe(true);
     }
   });
 

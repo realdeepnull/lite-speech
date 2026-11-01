@@ -57,11 +57,11 @@ built-in audio playback, and a mandatory server.
 Two independently versioned and publishable npm packages plus one private
 workspace root:
 
-| Package                    | Depends on                                                        | Responsibility                                                                                                                                 |
-| -------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@lite-speech/core`        | **nothing at runtime**                                            | Public API, `TtsEngine` contract, lifecycle, text preparation, streaming, asset/offline policy, errors, events                                 |
-| `@lite-speech/engine-onnx` | `@huggingface/transformers` (runtime), `@lite-speech/core` (peer) | Transformers.js/ONNX inference in a Web Worker, configurable model profiles, model + voice registry, device/dtype resolution, cache management |
-| root workspace             | private                                                           | Build/typecheck/lint/format/test/knip/size/pack orchestration, benchmark harness, demo                                                         |
+| Package                    | Depends on                                                        | Responsibility                                                                                                                      |
+| -------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `@lite-speech/core`        | **nothing at runtime**                                            | Public API, `TtsEngine` contract, lifecycle, text preparation, streaming, asset/offline policy, errors, events                      |
+| `@lite-speech/engine-onnx` | `@huggingface/transformers` (runtime), `@lite-speech/core` (peer) | Transformers.js/ONNX inference in a Web Worker, declarative model/voice/family catalogue, device/dtype resolution, cache management |
+| root workspace             | private                                                           | Build/typecheck/lint/format/test/knip/size/pack orchestration, benchmark harness, demo                                              |
 
 The `@lite-speech` scope is a proposed name and must be confirmed before
 publishing.
@@ -85,9 +85,9 @@ Application (browser / Node.js / Electron)
   @lite-speech/engine-onnx
   +--------------------------------+
   | TransformersEngine             |
-  | configurable model profiles    |
+  | catalog: language -> model     |
+  | families: family -> runner     |
   | device/dtype resolution        |
-  | static model + voice registry  |
   | Cache Storage management       |
   +---------------+----------------+
                   |  postMessage protocol
@@ -296,17 +296,20 @@ otherwise be re-implemented in every framework integration. Mirrors
 | `model-host.ts`          | Everything the worker does except post messages: single model, single-flight loads, one stream session, cooperative cancel   |
 | `worker.ts`              | The worker entry: serialized message queue and protocol plumbing                                                             |
 | `worker-protocol.ts`     | The request/response message contract shared by the engine and the worker                                                    |
-| `phonon.ts`              | The graph runner: `flow_lm` + `mimi_decoder`, public tokenizer encoding, per-frame generation                                |
-| `models.ts`              | `ENGINE_ID = "onnx"`, the pinned model and voice manifests, `createDefaultRegistry()`                                        |
-| `profiles.ts`            | `ModelProfile` type, the built-in Phonon profile, text and frame-budget rules                                                |
+| `catalog.ts`             | Registry and lookup: language → model, model → voices, asset URLs, variant selection. Pure data, no inference                |
+| `models.ts`              | The built-in catalogue: which models and voices ship, pinned revisions, sizes, digests                                       |
+| `families.ts`            | The family seam: `ModelProfile`, `ModelRunner`, `FamilyRegistry`, `VoiceRef`                                                 |
+| `phonon-profile.ts`      | The Phonon family's pure rules: config shape, text shaping, frame budget. No ONNX                                            |
+| `phonon.ts`              | The Phonon graph runner: `flow_lm` + `mimi_decoder`, public tokenizer encoding, per-frame generation                         |
+| `runners.ts`             | The built-in family registry: family id → runner factory. The only module that binds a name to an implementation             |
 | `webgpu.ts`              | `detectWebGpu`, `isFp16Supported`, `resolveDeviceDtype`, device/dtype types                                                  |
 | `node.ts`                | Node.js entry: in-thread inference plus a filesystem cache probe                                                             |
 | `index.ts`               | Public engine surface                                                                                                        |
 | `./worker` subpath       | `./worker` → `dist/worker.js`, instantiated via `new Worker(new URL("./worker.js", import.meta.url), { type: "module" })`    |
 
-`profiles.ts` exists so that model-family specifics stay behind a single,
-replaceable seam. A `ModelProfile` describes everything the generic worker must
-not hard-code:
+`families.ts` and `catalog.ts` exist so that model-family knowledge and catalogue knowledge each
+live behind a single, replaceable seam. A `ModelProfile` describes everything the generic worker
+must not hard-code:
 
 ```ts
 interface ModelProfile {
@@ -314,20 +317,28 @@ interface ModelProfile {
   streaming: StreamingClass; // truthful classification, surfaced in capabilities
   frameRate?: number; // 12.5 for a frame-based model
   prepareSegment(segment: string): string; // measured text shaping
-  maxFrames(prepared: string, inputLength: number, config: PhononConfig): number; // runaway guard
+  maxFrames?(prepared: string, inputLength: number): number; // runaway guard
+}
+
+interface ModelRunner {
+  profile: ModelProfile;
+  sampleRate: number;
+  synthesize(segment: string, options: RunOptions): AsyncGenerator<Float32Array>;
+  dispose(): Promise<void>;
 }
 ```
 
-Two things deliberately stay **out** of the profile. The graph driving lives in
-`phonon.ts`, which only the worker bundle can reach; and the profile has no
-`build(pipeline)` step, because the pinned Transformers.js release has no class
-for this architecture, so a profile is configuration over one runner rather than a
-class factory. The worker resolves a profile by the manifest's `family` (falling
-back to the built-in one), and an _unknown_ id is an explicit error rather than a
-silent Phonon fallback — running a different family through these input shapes
-would produce noise instead of an error. Built-in profiles carry their own frame
-sizes, conditioning inputs, and PCM normalization; version-specific workarounds
-stay inside them.
+Three things deliberately stay **out** of the profile. The graph driving lives in the family's
+runner (`phonon.ts`), which only the worker bundle can reach; the profile has no `build(pipeline)`
+step, because the pinned Transformers.js release has no class for this architecture, so a profile
+is configuration over one runner rather than a class factory; and nothing in the profile names a
+file, a repository, or a language, because those are manifest facts.
+
+The worker resolves a _runner_ by the manifest's `family` through `runners.ts`, and an _unknown_
+family is an explicit error rather than a silent Phonon fallback — running a different
+architecture through these input shapes would produce noise instead of an error. `runners.ts` is
+imported only by `worker.ts` and `node.ts`, which is what keeps Transformers.js out of the main
+bundle.
 
 ### 4.2 Device and dtype policy
 
@@ -463,10 +474,10 @@ Why it is shaped this way:
   adapter instead of returning `false` unconditionally. This is a deliberate
   deviation from `lite-translator`, where Node is only a test environment.
 
-### 4.5 Model and voice registry
+### 4.5 Model, voice, and family registry
 
-`createDefaultRegistry()` maps a language to a core `ModelManifest` and every voice
-to a `VoiceManifest`. Both are the core's own types, not an engine-private shape, so
+`createRegistry()` maps a language to a core `ModelManifest` and every voice to a
+`VoiceManifest`. Both are the core's own types, not an engine-private shape, so
 budgets and offline state stay engine-agnostic:
 
 ```text
@@ -474,45 +485,58 @@ ModelManifest {
   id: "onnx-community/phonon-31m-en-ONNX",
   revision: "<40-char commit sha>",   // immutable pin, never "main"
   license: "Apache-2.0",
-  family: "phonon",                   // selects the ModelProfile used to run it
+  family: "phonon",                   // selects the ModelRunner that runs it
+  languages: ["en"],                  // which requests this model serves
   sampleRate: 24000,                  // declared per model, never assumed globally
   files: [
-    { path: "config.json",         size: 4952 },
-    { path: "tokenizer.json",      size: 303009 },
-    { path: "tokenizer_config.json", size: 144 },
-    { path: "onnx/flow_lm.onnx",   size: 120089751 },   // fp32
-    { path: "onnx/mimi_decoder.onnx", size: 41267821 },
+    { path: "config.json",            size: 4952 },
+    { path: "tokenizer.json",         size: 303009 },
+    { path: "tokenizer_config.json",  size: 144 },
+    { path: "onnx/flow_lm.onnx",      variant: "fp32", size: 120089751 },
+    { path: "onnx/mimi_decoder.onnx", variant: "fp32", size: 41267821 },
     ... every quantized variant, so core can price any of them
   ]
 }
 
 VoiceManifest {
   id, modelId, language: "en", revision, license: "Apache-2.0",
-  sampleRate: 24000,
+  sampleRate: 24000, name, gender, description,
   files: [{ path: "voices/<voice>.bin", size: 256000 }]
 }
 ```
 
-The manifest lists **every** dtype variant; the engine reports only the files its
-resolved dtype loads. Otherwise `isCached()` would demand weights that are never
-read and `removeModel()` would delete weights belonging to another configuration.
+The manifest lists **every** dtype variant and labels each weight file with its
+`variant`; the engine reports only the files matching the dtype it resolved.
+Otherwise `isCached()` would demand weights that are never read and `removeModel()`
+would delete weights belonging to another configuration. Because the selection reads
+a declaration rather than a file name, a family may name its weights anything; the
+ONNX `_q4`/`.onnx_data` convention is only a fallback for a hand-written manifest.
 
-Every registered voice reports the language `"en"`. The repository's voices have
-design accents (`en-US`, `en-GB`, …), but this profile does not switch
-pronunciation, so advertising `"en-GB"` as a _language_ would make
+A voice is addressed by **its own** manifest: `modelId`, `revision`, and the path of
+its first file. That is what lets a family keep embeddings in a separate repository
+or under an arbitrary path without the engine learning a special case.
+
+Every registered voice reports the language it actually speaks. The built-in
+repository's voices have design accents (`en-US`, `en-GB`, …), but this profile does
+not switch pronunciation, so advertising `"en-GB"` as a _language_ would make
 `supports("en-GB")` a promise it cannot keep; the accent travels as a label in
 `VoiceInfo.description` instead.
 
-Three entry points for customization:
-`createOnnxEngine({ models })` for a different model map,
-`createOnnxEngine({ registry })` for a fully custom registry, and
-`createOnnxEngine({ profiles })` to register additional `ModelProfile`
-implementations. Selecting a model therefore never requires a new package, and
-adding a model family never changes the core API.
+Language resolution is a lookup, not a claim: an exact match wins, and a region code
+falls back to its primary subtag (`de-AT` → `de`) because the model and the audio are
+the same either way. A language that no registered model declares is rejected with
+`LANGUAGE_NOT_SUPPORTED`, listing what is available.
 
-The registry is a **declarative asset manifest** — URLs, optional `size`,
-optional `sha256` — which is what lets core reason about download budgets and
-offline state without knowing the backend.
+Three entry points for customization, all data:
+`createOnnxEngine({ models, voices })` for a different catalogue,
+`createOnnxEngine({ registry })` for a fully custom registry, and
+`createOnnxEngine({ families })` to register additional `ModelRunner` factories.
+Selecting a model, a language, or a family therefore never requires a new package,
+and adding any of them never changes the core API or the engine.
+
+The registry is a **declarative asset manifest** — URLs, optional `size`, optional
+`sha256`, optional `variant` — which is what lets core reason about download budgets
+and offline state without knowing the backend.
 
 ---
 

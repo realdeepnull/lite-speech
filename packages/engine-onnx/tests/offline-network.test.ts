@@ -40,7 +40,7 @@ async function createOfflineEngine(probe: FsProbe): Promise<OnnxEngine> {
     device: "cpu",
     worker: false,
     fsProbe: probe,
-    inThreadLoader: loader.load,
+    families: loader.families,
   });
 }
 

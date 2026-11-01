@@ -16,17 +16,12 @@
  * `./worker` export, which is a separate build entry. That keeps this module inside the size
  * budget and keeps the runtime out of an application's main bundle.
  *
- * Every export is deliberate. The profile and WebGPU seams are exported because
- * `createOnnxEngine({ profiles })` and a custom `device` policy are documented extension
- * points; the registry helpers are exported because a mirror or a self-hosted copy needs to
- * build its own manifests without reaching into internals.
+ * Every export is deliberate. The catalogue and family seams are exported because
+ * `createOnnxEngine({ models, voices, families })` is the documented way to add a model, a
+ * language, or a runner; the registry helpers are exported because a mirror or a self-hosted
+ * copy needs to build its own manifests without reaching into internals.
  */
-export {
-  createOnnxEngine,
-  type InThreadLoader,
-  type OnnxEngine,
-  type OnnxEngineOptions,
-} from "./create-onnx-engine.js";
+export { createOnnxEngine, type OnnxEngine, type OnnxEngineOptions } from "./create-onnx-engine.js";
 
 export {
   TransformersEngine,
@@ -35,31 +30,51 @@ export {
 } from "./transformers-engine.js";
 
 export {
-  DTYPE_SUFFIX,
   ENGINE_ID,
-  PHONON_GRAPHS,
-  PHONON_LANGUAGE,
-  PHONON_MODEL,
-  PHONON_VOICE_GENDERS,
-  PHONON_VOICE_NAMES,
-  PHONON_VOICES_MANIFEST,
   assetUrl,
-  createDefaultRegistry,
+  createRegistry,
   hubRevisionTemplate,
-  voiceAccent,
+  languagesOf,
+  selectVariantFiles,
+  variantOf,
   type EngineRegistry,
+  type RegistryInput,
+} from "./catalog.js";
+
+export {
+  BUILT_IN_MODELS,
+  BUILT_IN_VOICES,
+  PHONON_MODEL,
+  PHONON_VOICES,
+  PHONON_VOICES_MANIFEST,
+  PRIMARY_LANGUAGE,
+  createDefaultRegistry,
+  voiceManifest,
+  type CatalogueVoice,
 } from "./models.js";
 
 export {
-  DEFAULT_PROFILES,
+  PHONON_FAMILY,
+  PHONON_FRAME_RATE,
   PHONON_PROFILE,
-  PHONON_PROFILE_ID,
+  PHONON_STREAMING,
   normalizeSegment,
-  resolveProfile,
-  type ModelProfile,
+  phononMaxFrames,
+  readPhononConfig,
   type PhononConfig,
-  type ProfileRegistry,
-} from "./profiles.js";
+} from "./phonon-profile.js";
+
+export {
+  resolveRunner,
+  unknownFamilyError,
+  type FamilyRegistry,
+  type ModelProfile,
+  type ModelRunner,
+  type ModelRunnerFactory,
+  type RunOptions,
+  type RunnerLoadOptions,
+  type VoiceRef,
+} from "./families.js";
 
 export {
   detectWebGpu,

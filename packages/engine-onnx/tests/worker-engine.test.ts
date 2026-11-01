@@ -127,11 +127,17 @@ describe("engine on a worker", () => {
       kind: "load",
       modelId: "onnx-community/phonon-31m-en-ONNX",
       revision: "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4",
+      family: "phonon",
       device: "wasm",
       dtype: "fp32",
+      language: "en",
       voice: "default",
-      profile: "phonon",
+      voicePath: "voices/default.bin",
     });
+    // The voice is addressed by its manifest, not by a path the engine invents.
+    expect(load["voiceSha256"]).toBe(
+      "d9291d795d2b3b3ca5aaf0d61c44b378918c840824e7c0bc41cfb63e5b0c560b",
+    );
     replyLoaded(worker, load["id"] as number);
     await preload;
     expect(tts.isReady()).toBe(true);

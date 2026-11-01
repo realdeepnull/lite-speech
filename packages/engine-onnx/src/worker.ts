@@ -7,12 +7,13 @@
  * makes the observable order identical to the posted order. `cancel` bypasses the queue
  * deliberately: it must take effect while a long generation is still running.
  *
- * Everything interesting lives in `model-host.ts` (invariants) and `phonon.ts` (graphs).
- * This file exists so the model runtime is reachable as its own build entry and package
- * export: a bundler can see it explicitly, and it never lands in the main-thread bundle.
+ * Everything interesting lives in `model-host.ts` (invariants), `families.ts` (the seam), and
+ * one module per family (`phonon.ts`). This file exists so the model runtime is reachable as
+ * its own build entry and package export: a bundler can see it explicitly, and it never lands
+ * in the main-thread bundle.
  */
 import { createModelHost, type CacheOpener } from "./model-host.js";
-import { loadPhonon } from "./phonon.js";
+import { DEFAULT_FAMILIES } from "./runners.js";
 import type { WorkerRequest, WorkerResponse } from "./worker-protocol.js";
 import { transferListFor } from "./worker-protocol.js";
 
@@ -46,7 +47,7 @@ const openCache: CacheOpener | undefined =
     : () => caches.open("transformers-cache") as unknown as ReturnType<CacheOpener>;
 
 const host = createModelHost({
-  load: (options, voice) => loadPhonon(options, voice),
+  families: DEFAULT_FAMILIES,
   post,
   ...(openCache !== undefined && { openCache }),
 });

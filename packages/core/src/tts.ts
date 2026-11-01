@@ -856,12 +856,24 @@ function resolveEngine(options: TtsOptions): TtsEngine {
 /**
  * Resolves language and voice from the engine's voice list.
  *
- * An explicit `voice` wins; otherwise the first reported voice is used. An
- * explicit `language` wins over the voice's language, so an engine may accept a
+ * An explicit `voice` wins. Otherwise the first voice speaks for the request — but when a
+ * `language` is asked for, the first voice *of that language* is preferred, so a registry with
+ * several languages does not hand a German request an English voice just because English was
+ * registered first. Matching accepts a primary-subtag match (`"de"` for `"de-AT"`), because a
+ * regional variant of a language is still that language for voice selection.
+ *
+ * An explicit `language` also wins over the voice's own language, so an engine may accept a
  * language/voice pairing it does not enumerate.
  */
 function resolveRequest(voices: readonly VoiceInfo[], options: TtsOptions): TtsRequest {
-  const selectedVoice = options.voice ?? voices[0]?.id;
+  const primary = (language: string): string => language.split("-")[0] ?? language;
+  const forLanguage = (language: string | undefined): VoiceInfo | undefined =>
+    language === undefined
+      ? undefined
+      : (voices.find((voice) => voice.language === language) ??
+        voices.find((voice) => primary(voice.language) === primary(language)));
+
+  const selectedVoice = options.voice ?? forLanguage(options.language)?.id ?? voices[0]?.id;
   const voiceInfo = voices.find((candidate) => candidate.id === selectedVoice);
   const language = options.language ?? voiceInfo?.language ?? voices[0]?.language;
   return {

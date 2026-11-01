@@ -4,14 +4,16 @@ Local text-to-speech engine for `lite-speech`, powered by Transformers.js and
 ONNX Runtime (WASM by default, WebGPU opt-in).
 
 The engine implements the `TtsEngine` contract from `@lite-speech/core`: it runs
-inference in a Web Worker, resolves model profiles, keeps a pinned model and
-voice registry, and manages cache state. It is the only package allowed to
-depend on an ML runtime, and it never publishes model weights.
+inference in a Web Worker, resolves a model's family to a runner, keeps a declarative
+catalogue of models and voices, and manages cache state. It is the only package allowed
+to depend on an ML runtime, and it never publishes model weights.
 
-> **Status:** milestones M3 and M4. One verified profile (Phonon 31M EN,
+> **Status:** milestones M3–M6. One verified model (Phonon 31M EN,
 > `fp32`/`q4`/`q4f16`) synthesizes through the public core API in Chromium and Node.js.
 > Streaming delivers true incremental 80 ms frames. Provisioning is budgeted,
-> verified against pinned SHA-256 digests, and rolled back on failure.
+> verified against pinned SHA-256 digests, and rolled back on failure. Models,
+> languages, and model families are declared in a catalogue and registered through
+> the factory, so adding one needs no engine change.
 
 ## Install
 
@@ -125,17 +127,53 @@ Build-time recipes (Node.js filesystem cache, Playwright-warmed browser profile)
 - `@lite-speech/engine-onnx/node` — Node entry; keeps `node:` builtins external and
   Transformers.js an ordinary dependency.
 
-Pass `{ worker: false, inThreadLoader }` to run inference in-thread where `Worker` is
-unavailable.
+Pass `{ worker: false, families }` to run inference in-thread where `Worker` is
+unavailable; `createNodeOnnxEngine` does exactly that with the built-in families.
+
+## Models, languages, and families
+
+Three independent declarations, each read from exactly one place:
+
+| Decision          | Where it lives                       | Engine code needed |
+| ----------------- | ------------------------------------ | ------------------ |
+| Which model runs  | `ModelManifest` (`id`, `revision`)   | no                 |
+| Which language    | `ModelManifest.languages`            | no                 |
+| Which weights     | `AssetFile.variant`                  | no                 |
+| How it runs       | `ModelManifest.family` → a runner    | only a new family  |
+| Which voice bytes | `VoiceManifest` (`modelId`, `files`) | no                 |
+
+```ts
+import { createRegistry, createOnnxEngine } from "@lite-speech/engine-onnx";
+
+const engine = await createOnnxEngine({
+  registry: createRegistry({ models: [myModel], voices: myVoices }),
+});
+const tts = createTts({ engine, language: "de" }); // a voice of that language is selected
+```
+
+- **Another language** is another model manifest (or another entry in `languages`).
+  A region code falls back to its primary subtag (`de-AT` → `de`); a language no model
+  declares is rejected with `LANGUAGE_NOT_SUPPORTED` and the list of supported ones.
+- **Another checkpoint of the same architecture** is a manifest with the same `family`
+  and its own pin. Every variant is priced by core through `variant`, so a `q4` device
+  does not download `fp32`.
+- **Another architecture** is a `ModelRunner` factory added to `families`. It receives
+  the resolved model, device, dtype, and voice, and yields mono PCM frames; nothing in
+  the worker protocol or in core changes.
+
+The full recipe, including what a runner must guarantee and which tests keep it honest, is
+[`docs/adding-a-model.md`](https://github.com/realdeepnull/lite-speech/blob/main/docs/adding-a-model.md).
 
 ## Limitations
 
-These come from the model profile, not from the engine:
+These come from the shipped _model and family_, not from the engine's structure:
 
-- English only. Voices designed in other languages are not registered, because this
-  profile does not switch pronunciation.
+- The built-in catalogue still registers English only. Phonon 31M is an English
+  checkpoint, so registering a German voice in it would advertise a pronunciation it
+  cannot produce. A German model is a new manifest, not a new voice.
 - No text normalization: numbers, dates, currency, and some symbols are read as bytes
-  rather than spelled out.
+  rather than spelled out. Normalization is per language by nature, so it belongs in an
+  opt-in layer, not in the family's measured text rules.
 - No voice cloning. Voices are precomputed embeddings.
 - Determinism requires `temperature: 0`; the default samples. Pass
   `createOnnxEngine({ temperature: 0 })` — without it the option was unreachable, and the
@@ -148,6 +186,7 @@ These come from the model profile, not from the engine:
 
 ## Documentation
 
+- [Adding a model, a language, or a family](https://github.com/realdeepnull/lite-speech/blob/main/docs/adding-a-model.md)
 - [Architecture](https://github.com/realdeepnull/lite-speech/blob/main/docs/ARCHITECTURE.md)
 - [Provisioning](https://github.com/realdeepnull/lite-speech/blob/main/docs/provisioning.md)
 - [Roadmap](https://github.com/realdeepnull/lite-speech/blob/main/docs/ROADMAP.md)

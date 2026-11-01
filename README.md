@@ -11,8 +11,8 @@ inference service, no hidden downloads, no telemetry.
   `TtsEngine` contract, lifecycle, streaming, text preparation, and the
   asset/offline policy. Zero runtime dependencies.
 - **Engine**: [`@lite-speech/engine-onnx`](packages/engine-onnx) — local speech
-  synthesis with Transformers.js/ONNX in a Web Worker, with pinned model
-  profiles and a model + voice registry.
+  synthesis with Transformers.js/ONNX in a Web Worker, with a declarative model,
+  voice, and model-family catalogue.
 
 ## Install
 
@@ -42,19 +42,54 @@ In Node.js, use `createNodeOnnxEngine` from `@lite-speech/engine-onnx/node`; it 
 inference in-thread and reads cache state from the filesystem. A bundler-free browser
 demo against the built ESM output lives in [examples/demo](examples/demo).
 
+## Other models and languages
+
+Models, languages, and model families are declarations, not code. Register your own
+catalogue and pass it to the engine:
+
+```ts
+const engine = await createOnnxEngine({
+  models: [
+    {
+      id: "your-org/phonon-de-ONNX",
+      revision: "<40-char commit sha>", // a pin, never a branch
+      family: "phonon", // which runner runs it
+      languages: ["de"], // which requests it serves
+      license: "Apache-2.0",
+      sampleRate: 24000,
+      files: [
+        { path: "config.json", size: 4_952, sha256: "…" },
+        { path: "onnx/flow_lm_q4.onnx", variant: "q4", size: 84_132, sha256: "…" },
+      ],
+    },
+  ],
+  voices: [], // `VoiceManifest`s as returned by your own registry
+});
+
+const tts = createTts({ engine, language: "de" });
+```
+
+A new _architecture_ is a new entry in the engine's family registry, not a new package
+and not an engine edit. Sizes and digests are optional but recommended: without them the
+download cannot be priced and the cache cannot be proven, which is exactly what
+`offline: "strict"` refuses to do.
+
+The full recipe is [docs/adding-a-model.md](docs/adding-a-model.md).
+
 ## Status
 
 Pre-release. Milestones are tracked in the [roadmap](docs/ROADMAP.md):
 
-| Milestone | Theme                 | State |
-| --------- | --------------------- | ----- |
-| M0        | Foundation            | done  |
-| M1        | Inference spike       | done  |
-| M2        | Core MVP              | done  |
-| M3        | ONNX engine MVP       | done  |
-| M4        | Assets & provisioning | done  |
-| M5        | Measurement           | done  |
-| M6        | Beta `0.1.0`          | next  |
+| Milestone | Theme                      | State |
+| --------- | -------------------------- | ----- |
+| M0        | Foundation                 | done  |
+| M1        | Inference spike            | done  |
+| M2        | Core MVP                   | done  |
+| M3        | ONNX engine MVP            | done  |
+| M4        | Assets & provisioning      | done  |
+| M5        | Measurement                | done  |
+| M6        | Modular models & languages | done  |
+| M7        | Beta `0.1.0`               | next  |
 
 The M1 evidence — pins, measured sizes and latencies, streaming classification, and
 the go/no-go decision — is in

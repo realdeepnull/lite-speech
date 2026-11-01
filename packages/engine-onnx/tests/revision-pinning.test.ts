@@ -13,7 +13,7 @@
 import { AutoTokenizer, env } from "@huggingface/transformers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { hubRevisionTemplate } from "../src/models.js";
+import { hubRevisionTemplate } from "../src/catalog.js";
 
 /** The pinned commit the manifest uses. */
 const REVISION = "4f0cda7c60dddb4862d0e68ff9ff60c32ffdc9f4";

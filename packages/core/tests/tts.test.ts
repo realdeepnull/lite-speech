@@ -51,6 +51,38 @@ describe("createTts()", () => {
     expect(tts.request).toEqual({ language: "de", voice: "female-de" });
   });
 
+  it("selects a voice of the requested language, not merely the first voice", () => {
+    const engine = createFakeEngine({
+      voices: [
+        { id: "female-en", language: "en" },
+        { id: "female-de", language: "de" },
+        { id: "male-de", language: "de" },
+      ],
+      languages: ["en", "de"],
+    });
+
+    // English is registered first, but asking for German must not pick an English voice.
+    expect(createTts({ engine, language: "de" }).request).toEqual({
+      language: "de",
+      voice: "female-de",
+    });
+  });
+
+  it("accepts a regional variant of a registered language", () => {
+    const engine = createFakeEngine({
+      voices: [
+        { id: "female-en", language: "en" },
+        { id: "female-de", language: "de" },
+      ],
+      languages: ["en", "de", "de-AT"],
+    });
+
+    expect(createTts({ engine, language: "de-AT" }).request).toEqual({
+      language: "de-AT",
+      voice: "female-de",
+    });
+  });
+
   it("throws ENGINE_NOT_SUPPORTED when no engine is available", () => {
     clearDefaultEngines();
 

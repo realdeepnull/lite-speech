@@ -1,14 +1,19 @@
 /**
- * A scripted stand-in for `loadPhonon`.
+ * A scripted stand-in for a real runner factory.
  *
  * The engine's value is in its protocol handling, not in ONNX, so every engine and host test
  * drives a fake model. Faking it keeps the suite in Node, offline, and fast, and lets a test
  * make a stream take exactly as many frames as an assertion needs.
  */
-import type { ProgressEvent } from "@lite-speech/core";
-import type { LoadedPhonon } from "../../src/phonon.js";
-import type { ModelProfile, PhononConfig } from "../../src/profiles.js";
-import type { PhononLoader } from "../../src/model-host.js";
+import type { ProgressEvent, StreamingClass } from "@lite-speech/core";
+
+import type {
+  FamilyRegistry,
+  ModelProfile,
+  ModelRunner,
+  RunnerLoadOptions,
+} from "../../src/families.js";
+import type { PhononConfig } from "../../src/phonon-profile.js";
 
 /** Counters a test asserts on, instead of inspecting private state. */
 export interface FakeLoaderStats {
@@ -16,9 +21,13 @@ export interface FakeLoaderStats {
   voices: string[];
   disposes: number;
   lastVoice: string | undefined;
+  lastLanguage: string | undefined;
+  lastFamily: string | undefined;
   lastDtype: string | undefined;
   lastDevice: string | undefined;
   lastVoiceSha256: string | undefined;
+  lastVoicePath: string | undefined;
+  lastCacheDir: string | undefined;
 }
 
 /** Options for {@link createFakeLoader}. */
@@ -43,13 +52,12 @@ export interface FakeLoaderOptions {
   readonly onFirstFrame?: () => void;
   /** Ignores the cancel flag, to prove the engine does not depend on the worker honouring it. */
   readonly ignoreCancel?: boolean;
+  /** Sample rate the fake claims; default 24 kHz. */
+  readonly sampleRate?: number;
+  /** Streaming class the fake claims; default incremental frames. */
+  readonly streaming?: StreamingClass;
 }
 
-/** The fake loader plus the stats a test asserts on. */
-export interface FakeLoader {
-  readonly load: PhononLoader;
-  readonly stats: FakeLoaderStats;
-}
 /** Configuration the fake reports, matching the real Phonon values. */
 export const FAKE_CONFIG: PhononConfig = {
   sampleRate: 24_000,
@@ -66,6 +74,13 @@ export const FAKE_CONFIG: PhononConfig = {
 const sleep = (ms: number): Promise<void> =>
   ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The fake runner factory plus the stats a test asserts on. */
+export interface FakeLoader {
+  /** A family registry containing one `"phonon"` factory backed by this fake. */
+  readonly families: FamilyRegistry;
+  readonly stats: FakeLoaderStats;
+}
+
 /** Creates a loader that answers deterministically and records what it was asked for. */
 export function createFakeLoader(options: FakeLoaderOptions = {}): FakeLoader {
   const stats: FakeLoaderStats = {
@@ -73,39 +88,46 @@ export function createFakeLoader(options: FakeLoaderOptions = {}): FakeLoader {
     voices: [],
     disposes: 0,
     lastVoice: undefined,
+    lastLanguage: undefined,
+    lastFamily: undefined,
     lastDtype: undefined,
     lastDevice: undefined,
     lastVoiceSha256: undefined,
+    lastVoicePath: undefined,
+    lastCacheDir: undefined,
   };
   const frames = options.frames ?? 3;
   const samplesPerFrame = options.samplesPerFrame ?? 1_920;
 
-  const load: PhononLoader = async (loadOptions, voice) => {
+  const load = async (loadOptions: RunnerLoadOptions): Promise<ModelRunner> => {
     stats.loads += 1;
-    stats.lastVoice = voice;
+    stats.lastVoice = loadOptions.voice.id;
+    stats.lastLanguage = loadOptions.voice.language;
+    stats.lastFamily = loadOptions.family;
     stats.lastDtype = loadOptions.dtype;
     stats.lastDevice = loadOptions.device;
-    stats.lastVoiceSha256 = loadOptions.voiceSha256;
-    stats.voices.push(voice);
+    stats.lastVoiceSha256 = loadOptions.voice.sha256;
+    stats.lastVoicePath = loadOptions.voice.path;
+    stats.lastCacheDir = loadOptions.cacheDir;
+    stats.voices.push(loadOptions.voice.id);
     for (const event of options.progress ?? []) {
-      loadOptions.onProgress(event);
+      loadOptions.onProgress?.(event);
     }
     if (options.loadError !== undefined) {
       throw options.loadError;
     }
 
     const profile: ModelProfile = {
-      id: "phonon",
-      streaming: "incremental-frames",
+      id: loadOptions.family,
+      streaming: options.streaming ?? "incremental-frames",
       frameRate: FAKE_CONFIG.frameRate,
       prepareSegment: (segment) => segment,
       maxFrames: () => frames,
     };
 
-    const loaded: LoadedPhonon = {
-      config: FAKE_CONFIG,
+    const loaded: ModelRunner = {
       profile,
-      encode: (text) => Array.from(text, () => 1),
+      sampleRate: options.sampleRate ?? FAKE_CONFIG.sampleRate,
       async *synthesize(_segment, runOptions) {
         if (options.synthesizeError !== undefined) {
           throw options.synthesizeError;
@@ -137,5 +159,5 @@ export function createFakeLoader(options: FakeLoaderOptions = {}): FakeLoader {
     return loaded;
   };
 
-  return { load, stats };
+  return { families: { phonon: load }, stats };
 }
